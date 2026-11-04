@@ -61,6 +61,8 @@ OUTER_LIPS = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,
 
 # Inner lip contours, both running corner (78) to corner (308).
 UPPER_INNER_LIP = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308]
+# Outer and inner lip points whose midpoints lie on the lips.
+LIP_SAMPLES = [(0, 13), (17, 14), (39, 81), (269, 311), (84, 87), (314, 317)]
 LOWER_INNER_LIP = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308]
 
 FACE_VERTEX_SHADER = """
@@ -115,17 +117,20 @@ uniform float teeth_amount;  // 0 while the lips touch, so a closed mouth stays 
 uniform float mouth_size;    // the cat's mouth width at rest, face widths
 uniform float mouth_span;    // current mouth width, face widths
 uniform vec2 turn;           // image shift per face width of depth (from the head rotation)
+uniform vec3 lip_tint;       // colour of the cat's lips (RGB, mean 1): gums, tongue and teeth take it on
 in vec3 m;
 in float shade;
 out vec4 color;
 
 const float TEETH_DEPTH = 0.015, LOWER_TEETH_DEPTH = 0.03, TONGUE_DEPTH = 0.06, THROAT_DEPTH = 0.14;
 const float ARCH = 0.55;  // dental arch radius, mouth widths
-// Upper teeth from the middle outward: incisors, canine, premolars, molar.
-const float UPPER_W[6] = float[6](0.165, 0.13, 0.145, 0.135, 0.135, 0.15);
-const float UPPER_L[6] = float[6](0.2, 0.17, 0.2, 0.16, 0.15, 0.13);
-const float LOWER_W[6] = float[6](0.105, 0.115, 0.135, 0.13, 0.13, 0.15);
-const float LOWER_L[6] = float[6](0.06, 0.065, 0.08, 0.065, 0.055, 0.05);
+// A cat's teeth from the middle outward: three small incisors, the fang,
+// premolars, molar.
+const int FANG = 3;
+const float UPPER_W[6] = float[6](0.07, 0.065, 0.07, 0.12, 0.14, 0.15);
+const float UPPER_L[6] = float[6](0.1, 0.095, 0.1, 0.3, 0.13, 0.1);
+const float LOWER_W[6] = float[6](0.06, 0.055, 0.06, 0.11, 0.14, 0.15);
+const float LOWER_L[6] = float[6](0.055, 0.05, 0.055, 0.17, 0.07, 0.05);
 
 const vec3 ENAMEL = vec3(0.86, 0.83, 0.75);
 const vec3 ENAMEL_ROOT = vec3(0.72, 0.64, 0.5);
@@ -158,7 +163,9 @@ vec2 tooth_row(float x, float down, const float W[6], const float L[6], float po
     }
     float q = clamp((arc - start) / w, 0.0, 1.0);  // 0 = side toward the middle
     float side = abs(2.0 * q - 1.0);
-    float len = L[k] * (k == 2 ? 1.0 - point * side : 1.0 - 0.2 * pow(smoothstep(0.5, 1.0, side), 2.0));
+    // The fang tapers to a point, slightly curved; the others are rounded off.
+    float len = L[k] * (k == FANG ? 1.0 - point * pow(side, 1.4)
+                                  : 1.0 - 0.2 * pow(smoothstep(0.5, 1.0, side), 2.0));
     float aa = fwidth(down) + 1e-4;
     float cover = 1.0 - smoothstep(len - aa, len + aa, down);
     // Dark slits between teeth, wider toward the tips.
@@ -166,7 +173,7 @@ vec2 tooth_row(float x, float down, const float W[6], const float L[6], float po
     float qa = fwidth(q) + 1e-4;
     cover *= smoothstep(0.0, slit * 0.5 + qa, min(q, 1.0 - q));
     float v = clamp(down / len, 0.0, 1.0);
-    rgb = mix(ENAMEL_ROOT, ENAMEL, smoothstep(0.0, 0.35, v));
+    rgb = mix(ENAMEL_ROOT, ENAMEL * pow(lip_tint, vec3(0.15)), smoothstep(0.0, 0.35, v));
     rgb = mix(rgb, ENAMEL_TIP, smoothstep(0.65, 1.0, v));
     float facing = cos(theta);
     float shade = (0.25 + 0.75 * pow(facing, 1.5)) * (0.8 + 0.2 * sqrt(sin(3.14159 * q)));
@@ -182,7 +189,9 @@ void main() {
     vec2 t = layer(THROAT_DEPTH);
     float into = clamp(min(t.y, gap - t.y) / max(0.5 * gap, 1e-4), 0.0, 1.0);
     float centre = 1.0 - smoothstep(0.15, 0.5, abs(t.x));
-    vec3 c = mix(MUCOSA, THROAT, smoothstep(0.0, 1.0, into) * mix(0.55, 1.0, centre));
+    vec3 gum_color = GUM * mix(vec3(1.0), lip_tint, 0.5);
+    vec3 mucosa = MUCOSA * mix(vec3(1.0), lip_tint, 0.3);
+    vec3 c = mix(mucosa, THROAT, smoothstep(0.0, 1.0, into) * mix(0.55, 1.0, centre));
 
     // Tongue, rising from the floor of the mouth.
     vec2 g = layer(TONGUE_DEPTH);
@@ -193,21 +202,21 @@ void main() {
     float groove = 1.0 - 0.3 * exp(-pow(g.x / 0.035, 2.0));
     float top = smoothstep(0.0, max(height, 1e-4), rise);  // 0 at the front, 1 at its back edge
     float sides = mix(0.7, 1.0, 1.0 - smoothstep(0.2, 0.36, abs(g.x)));
-    vec3 tongue = TONGUE * groove * mix(1.05, 0.55, top * top) * sides;
+    vec3 tongue = TONGUE * mix(vec3(1.0), lip_tint, 0.3) * groove * mix(1.05, 0.55, top * top) * sides;
     c = mix(c, tongue, on_tongue);
 
     // Lower teeth, mostly hidden behind the lower lip.
     vec3 rgb;
     vec2 lo = layer(LOWER_TEETH_DEPTH);
-    vec2 lower = tooth_row(lo.x, gap - lo.y, LOWER_W, LOWER_L, 0.15, rgb);
+    vec2 lower = tooth_row(lo.x, gap - lo.y, LOWER_W, LOWER_L, 0.8, rgb);
     c = mix(c, mix(TOOTH_SHADOW, rgb, 0.75), lower.x * teeth_amount);
 
     // Upper teeth, with the gum line just showing between them.
     vec2 up = layer(TEETH_DEPTH);
-    vec2 upper = tooth_row(up.x, up.y, UPPER_W, UPPER_L, 0.25, rgb);
+    vec2 upper = tooth_row(up.x, up.y, UPPER_W, UPPER_L, 0.85, rgb);
     c = mix(c, rgb, upper.x * teeth_amount);
     float gum = 1.0 - smoothstep(0.012, 0.02, up.y);
-    c = mix(c, GUM * 0.8, gum * teeth_amount);
+    c = mix(c, gum_color * 0.8, gum * teeth_amount);
 
     // The lips shade the inside right next to them.
     float lip = m.y / mouth_size, rim = gap - lip;
@@ -216,6 +225,16 @@ void main() {
     color = vec4(c.bgr * shade, 1.0);  // the pipeline is BGR
 }
 """
+
+
+def _lip_tint(sprite: np.ndarray, face: np.ndarray) -> np.ndarray:
+    """The cat's lip colour as RGB with mean 1."""
+    samples = []
+    for i, j in LIP_SAMPLES:
+        x, y = ((face[i, :2] + face[j, :2]) / 2).astype(int)
+        samples.append(sprite[y - 2:y + 3, x - 2:x + 3, :3].reshape(-1, 3))
+    rgb = np.median(np.concatenate(samples), axis=0)[::-1].astype(float) + 1
+    return rgb / rgb.mean()
 
 
 def _outline(alpha: np.ndarray) -> np.ndarray:
@@ -440,6 +459,7 @@ class CatMesh:
              (self.shade_vbo, "1f", "in_shade")],
             ctx.buffer(triangles.astype("i4").tobytes()),
         )
+        self.lip_tint = _lip_tint(sprite, landmarks)
         self.mouth_size = np.linalg.norm(face[78, :2] - face[308, :2]) / self.face_width
         self.mouth = np.zeros((len(self.rest), 3), "f4")  # per vertex: s, d, g (see shader)
         across = np.linspace(0, 1, len(UPPER_INNER_LIP))
@@ -501,6 +521,7 @@ class CatMesh:
         teeth = (gap - TEETH_SHOW[0]) / (TEETH_SHOW[1] - TEETH_SHOW[0])
         prog["teeth_amount"].value = float(np.clip(teeth, 0, 1))
         prog["mouth_size"].value = float(self.mouth_size)
+        prog["lip_tint"].value = tuple(float(v) for v in self.lip_tint)
         prog["mouth_span"].value = float(np.linalg.norm(upper[-1, :2] - upper[0, :2]) / self.face_width)
         # A point one face width deeper moves by rotation[:2, 2] (image x, y).
         prog["turn"].value = tuple(float(v) for v in rotation[:2, 2])

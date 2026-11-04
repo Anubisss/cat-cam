@@ -2,7 +2,7 @@
 
 Be a cat in your Zoom calls. Pick one of six cats; it turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile, open
-mouth with teeth) and your hands become paws. Its ears perk up when you raise
+mouth with fangs) and your hands become paws. Its ears perk up when you raise
 your brows, flatten when you frown, and twitch now and then, and the side of
 its head that turns away from the light falls into shadow.
 
@@ -151,8 +151,9 @@ These constants sit at the top of their files:
    the cat's points (`catcam/face_motion.py`).
 4. The cat photo is a textured 3D mesh. It is deformed by your expression,
    rotated by your head pose and drawn with OpenGL, shaded by how much each
-   part turned toward or away from the light (`catcam/lighting.py`). The mouth's inside and
-   teeth are drawn in the gap between the lips (`catcam/cat_mesh.py`).
+   part turned toward or away from the light (`catcam/lighting.py`). The
+   mouth's inside and cat teeth are drawn in the gap between the lips,
+   coloured to match the cat's lips (`catcam/cat_mesh.py`).
 5. Blinks lower the cat's eyelids in its texture (`catcam/cat_face.py`), the
    ears bend about a hinge below their tips (`catcam/ears.py`), and paws are
    drawn where your hands are (`catcam/paws.py`).

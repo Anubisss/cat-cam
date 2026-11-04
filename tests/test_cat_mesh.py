@@ -135,3 +135,28 @@ def test_small_mouths_are_enlarged(meshes):
         # Away from the mouth the cat is unchanged; the nose barely moves.
         np.testing.assert_allclose(mesh.rest[[10, 33, 263], :2], cat.points[[10, 33, 263], :2])
         np.testing.assert_allclose(mesh.rest[1, :2], cat.points[1, :2], atol=0.01 * mesh.face_width)
+
+
+def test_fangs_reach_below_the_front_teeth(meshes):
+    for cat, mesh in meshes:
+        image = mesh.render(cat.sprite, _open(mesh, 0.14), np.eye(3))
+        # From just below the upper lip (pale lips would count as enamel).
+        top = (mesh.offset + (mesh.rest[13, :2] + [0, 0.01 * mesh.face_width]) * mesh.scale).astype(int)
+        depth = int(0.12 * mesh.face_width * mesh.scale)  # within the opening
+        mouth = mesh.mouth_size * mesh.face_width * mesh.scale
+        lengths = []
+        for f in [0.08, *np.linspace(0.18, 0.3, 13)]:  # a front tooth, then around the fang
+            column = image[top[1]:top[1] + depth, top[0] + int(f * mouth)].astype(int)
+            bright = column.mean(axis=1) > 150  # enamel
+            runs = np.diff(np.flatnonzero(np.diff(np.concatenate([[0], bright, [0]]))))[::2]
+            lengths.append(runs.max() if len(runs) else 0)  # the longest bright stretch: a tooth
+        front, fang = lengths[0], max(lengths[1:])
+        assert fang > 1.8 * front, (cat.name, front, fang)
+
+
+def test_mouth_takes_on_the_lip_colour(meshes):
+    for _, mesh in meshes:
+        assert mesh.lip_tint.shape == (3,) and abs(mesh.lip_tint.mean() - 1) < 1e-6
+    reddest = max(meshes, key=lambda cm: cm[1].lip_tint[0])[1]
+    palest = min(meshes, key=lambda cm: cm[1].lip_tint[0])[1]
+    assert reddest.lip_tint[0] > palest.lip_tint[0] + 0.1  # the cats' lips really differ
