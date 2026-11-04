@@ -15,6 +15,8 @@ import moderngl
 import numpy as np
 from scipy.spatial import Delaunay
 
+from catcam.cat_face import EYES
+
 OUTLINE_POINTS = 90
 SKULL_DEPTH = 0.15  # head outline sits this far (in face widths) behind the nearest face points
 OUTLINE_DEPTH_SMOOTHING = 9  # outline points averaged for a smooth silhouette depth
@@ -31,6 +33,16 @@ SKULL_MARGIN = 0.03  # skull points keep this far from the face and the outline
 LIP_SEAM = 0.0015  # half the gap between the lips of the closed mouth
 # Framing: ear tips and chin as fractions of the screen height.
 TOP_MARGIN, CHIN_LINE = 0.02, 0.93
+
+# Around each eye the face moves rigidly (with the eye corners): a person's
+# eyelids travel further than these squinting cats' eyes are tall, so copying
+# them would fold the mesh. The eyelids are drawn closed in the texture instead.
+# Ellipse around the eye, in eye widths, inside which the face is rigid, with a
+# soft edge from EYE_RIGID[0] to [1] of its radius.
+EYE_ELLIPSE = (0.75, 0.5)
+EYE_RIGID = (0.55, 1.0)
+EYE_CORNERS = ((33, 133), (263, 362))  # image-left eye, image-right eye
+IRISES = range(468, 478)  # left free, so the cat's gaze follows yours
 
 # Inner lip contours, both running corner (78) to corner (308).
 UPPER_INNER_LIP = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308]
@@ -57,41 +69,128 @@ void main() {
     color = c;
 }
 """
-# Mouth interior: t runs 0 at the upper lip to 1 at the lower lip, s runs 0 at
-# one mouth corner to 1 at the other. Colors are BGR because the whole pipeline is BGR.
+# The inside of the mouth, drawn in the gap between the inner lips. Per vertex:
+# s runs 0..1 from one mouth corner to the other, d is the distance below the
+# upper lip and g the lip gap there, both in face widths. Everything inside is
+# sized in "mouth widths" (the cat's closed mouth, corner to corner), so teeth
+# keep their size however wide the mouth opens. Teeth, tongue and throat lie
+# behind the lips and slide against them when the head turns (parallax).
 MOUTH_VERTEX_SHADER = """
 #version 330
 in vec3 in_pos;
-in vec2 in_ts;
-out vec2 ts;
+in vec3 in_mouth;
+out vec3 m;
 void main() {
     // Slightly in front of the lips, so no skin stretched across the opening
     // can show through; the nose etc. are far enough forward to still cover it.
     gl_Position = vec4(in_pos.xy, in_pos.z - 0.01, 1.0);
-    ts = in_ts;
+    m = in_mouth;
 }
 """
 MOUTH_FRAGMENT_SHADER = """
 #version 330
 uniform float teeth_amount;  // 0 while the lips touch, so a closed mouth stays a dark line
-in vec2 ts;
+uniform float mouth_size;    // the cat's mouth width at rest, face widths
+uniform float mouth_span;    // current mouth width, face widths
+uniform vec2 turn;           // image shift per face width of depth (from the head rotation)
+in vec3 m;
 out vec4 color;
-const float TEETH = 9.0;  // upper teeth across the mouth
-void main() {
-    float t = ts.x, s = ts.y;
-    vec3 inside = vec3(0.10, 0.06, 0.16);
-    vec3 tongue = vec3(0.38, 0.36, 0.70);
-    vec3 c = mix(inside, tongue, smoothstep(0.62, 0.85, t));
 
-    // Upper teeth: rounded tips, dark gaps between them, shaded toward the corners.
-    float tooth = fract(s * TEETH);
-    float edge = min(tooth, 1.0 - tooth);
-    float length = 0.2 + 0.12 * smoothstep(0.0, 0.35, edge);
-    float corner = smoothstep(0.0, 0.3, min(s, 1.0 - s));
-    vec3 enamel = vec3(0.82, 0.88, 0.90) * mix(0.55, 1.0, smoothstep(0.0, 0.1, edge));
-    enamel *= mix(0.35, 1.0, corner) * mix(1.0, 0.85, t / length);
-    float on_tooth = (1.0 - smoothstep(length - 0.03, length, t)) * teeth_amount;
-    color = vec4(mix(c, enamel, on_tooth), 1.0);
+const float TEETH_DEPTH = 0.015, LOWER_TEETH_DEPTH = 0.03, TONGUE_DEPTH = 0.06, THROAT_DEPTH = 0.14;
+const float ARCH = 0.55;  // dental arch radius, mouth widths
+// Upper teeth from the middle outward: incisors, canine, premolars, molar.
+const float UPPER_W[6] = float[6](0.165, 0.13, 0.145, 0.135, 0.135, 0.15);
+const float UPPER_L[6] = float[6](0.2, 0.17, 0.2, 0.16, 0.15, 0.13);
+const float LOWER_W[6] = float[6](0.105, 0.115, 0.135, 0.13, 0.13, 0.15);
+const float LOWER_L[6] = float[6](0.06, 0.065, 0.08, 0.065, 0.055, 0.05);
+
+const vec3 ENAMEL = vec3(0.86, 0.83, 0.75);
+const vec3 ENAMEL_ROOT = vec3(0.72, 0.64, 0.5);
+const vec3 ENAMEL_TIP = vec3(0.7, 0.72, 0.76);
+const vec3 GUM = vec3(0.78, 0.38, 0.42);
+const vec3 TONGUE = vec3(0.74, 0.34, 0.38);
+const vec3 MUCOSA = vec3(0.42, 0.11, 0.13);
+const vec3 THROAT = vec3(0.05, 0.008, 0.015);
+const vec3 TOOTH_SHADOW = vec3(0.3, 0.13, 0.11);  // teeth in shadow pick up the mouth's red
+
+// Position of a layer lying `depth` behind the lips, as seen at this pixel:
+// x across the mouth and y down from the upper lip, in mouth widths.
+vec2 layer(float depth) {
+    float x = (m.x - 0.5) * mouth_span - turn.x * depth;
+    return vec2(x, m.y - turn.y * depth) / mouth_size;
+}
+
+// A row of teeth around the dental arch. `down` is the distance from the gum
+// edge toward the tips (mouth widths). Returns (coverage, shade); `rgb` gets
+// the tooth colour.
+vec2 tooth_row(float x, float down, const float W[6], const float L[6], float point, out vec3 rgb) {
+    float theta = asin(clamp(x / ARCH, -0.999, 0.999));
+    float arc = abs(theta) * ARCH, start = 0.0;
+    int k = 0;
+    float w = W[0];
+    for (int i = 0; i < 6; i++) {
+        k = i; w = W[i];
+        if (arc < start + w || i == 5) break;
+        start += w;
+    }
+    float q = clamp((arc - start) / w, 0.0, 1.0);  // 0 = side toward the middle
+    float side = abs(2.0 * q - 1.0);
+    float len = L[k] * (k == 2 ? 1.0 - point * side : 1.0 - 0.2 * pow(smoothstep(0.5, 1.0, side), 2.0));
+    float aa = fwidth(down) + 1e-4;
+    float cover = 1.0 - smoothstep(len - aa, len + aa, down);
+    // Dark slits between teeth, wider toward the tips.
+    float slit = 0.025 + 0.06 * smoothstep(0.6 * len, len, down);
+    float qa = fwidth(q) + 1e-4;
+    cover *= smoothstep(0.0, slit * 0.5 + qa, min(q, 1.0 - q));
+    float v = clamp(down / len, 0.0, 1.0);
+    rgb = mix(ENAMEL_ROOT, ENAMEL, smoothstep(0.0, 0.35, v));
+    rgb = mix(rgb, ENAMEL_TIP, smoothstep(0.65, 1.0, v));
+    float facing = cos(theta);
+    float shade = (0.25 + 0.75 * pow(facing, 1.5)) * (0.8 + 0.2 * sqrt(sin(3.14159 * q)));
+    rgb = mix(TOOTH_SHADOW, rgb, clamp(shade, 0.0, 1.0));
+    rgb += 0.1 * exp(-pow((q - 0.42) / 0.12, 2.0)) * smoothstep(0.15, 0.4, v)
+           * (1.0 - smoothstep(0.6, 0.9, v)) * pow(facing, 4.0);  // shine
+    return vec2(cover, shade);
+}
+
+void main() {
+    float gap = m.z / mouth_size;
+    // Throat: dark in the middle and back, reddish toward the lips and corners.
+    vec2 t = layer(THROAT_DEPTH);
+    float into = clamp(min(t.y, gap - t.y) / max(0.5 * gap, 1e-4), 0.0, 1.0);
+    float centre = 1.0 - smoothstep(0.15, 0.5, abs(t.x));
+    vec3 c = mix(MUCOSA, THROAT, smoothstep(0.0, 1.0, into) * mix(0.55, 1.0, centre));
+
+    // Tongue, rising from the floor of the mouth.
+    vec2 g = layer(TONGUE_DEPTH);
+    float rise = gap - g.y;  // height above the lower lip
+    float height = min(0.4 * gap, 0.16) * sqrt(max(1.0 - pow(g.x / 0.36, 2.0), 0.0));
+    float aa = fwidth(rise) + 1e-4;
+    float on_tongue = 1.0 - smoothstep(height - aa, height + aa, rise);
+    float groove = 1.0 - 0.3 * exp(-pow(g.x / 0.035, 2.0));
+    float top = smoothstep(0.0, max(height, 1e-4), rise);  // 0 at the front, 1 at its back edge
+    float sides = mix(0.7, 1.0, 1.0 - smoothstep(0.2, 0.36, abs(g.x)));
+    vec3 tongue = TONGUE * groove * mix(1.05, 0.55, top * top) * sides;
+    c = mix(c, tongue, on_tongue);
+
+    // Lower teeth, mostly hidden behind the lower lip.
+    vec3 rgb;
+    vec2 lo = layer(LOWER_TEETH_DEPTH);
+    vec2 lower = tooth_row(lo.x, gap - lo.y, LOWER_W, LOWER_L, 0.15, rgb);
+    c = mix(c, mix(TOOTH_SHADOW, rgb, 0.75), lower.x * teeth_amount);
+
+    // Upper teeth, with the gum line just showing between them.
+    vec2 up = layer(TEETH_DEPTH);
+    vec2 upper = tooth_row(up.x, up.y, UPPER_W, UPPER_L, 0.25, rgb);
+    c = mix(c, rgb, upper.x * teeth_amount);
+    float gum = 1.0 - smoothstep(0.012, 0.02, up.y);
+    c = mix(c, GUM * 0.8, gum * teeth_amount);
+
+    // The lips shade the inside right next to them.
+    float lip = m.y / mouth_size, rim = gap - lip;
+    c *= mix(0.45, 1.0, smoothstep(0.0, 0.05, lip)) * mix(0.6, 1.0, smoothstep(0.0, 0.03, rim));
+    c *= mix(0.55, 1.0, smoothstep(0.0, 0.12, 0.5 - abs(m.x - 0.5)));  // corners
+    color = vec4(c.bgr, 1.0);  // the pipeline is BGR
 }
 """
 
@@ -154,6 +253,22 @@ def _skull_points(alpha: np.ndarray, face: np.ndarray, face_width: float, outlin
     return np.column_stack([grid, z])
 
 
+def _eye_weights(face: np.ndarray) -> np.ndarray:
+    """(2, 478) how rigidly each face point follows each eye's corners."""
+    weights = np.zeros((len(EYE_CORNERS), len(face)))
+    for eye, corners in enumerate(EYE_CORNERS):
+        a, b = face[list(corners), :2]
+        width = np.linalg.norm(a - b)
+        d = (face[:, :2] - (a + b) / 2) / (np.array(EYE_ELLIPSE) * width)
+        r = np.linalg.norm(d, axis=1)
+        t = np.clip((r - EYE_RIGID[0]) / (EYE_RIGID[1] - EYE_RIGID[0]), 0, 1)
+        weights[eye] = 1 - t * t * (3 - 2 * t)  # smoothstep falloff
+    for eye, (upper, lower) in enumerate(EYES):
+        weights[eye, upper + lower] = 1  # the lids themselves always
+    weights[:, list(IRISES)] = 0
+    return weights
+
+
 def _face_triangles(points_2d: np.ndarray, face_width: float) -> np.ndarray:
     """Delaunay triangles, minus the ones bridging the lips (the mouth opening).
 
@@ -182,7 +297,11 @@ def _face_triangles(points_2d: np.ndarray, face_width: float) -> np.ndarray:
         any(cv2.pointPolygonTest(mouth, (float(x), float(y)), True) > tolerance for x, y in tri)
         for tri in probes
     ])
-    return triangles[~inside]
+    # Only triangles made of lip points span the opening. Others reaching into
+    # it (near the corners, where the lips are thin) stay, so no hole opens
+    # beside the mouth; the mouth is drawn in front of them anyway.
+    on_lips = np.isin(triangles, UPPER_INNER_LIP + LOWER_INNER_LIP).all(axis=1)
+    return triangles[~(inside & on_lips)]
 
 
 def _mouth_triangles() -> np.ndarray:
@@ -236,6 +355,7 @@ class CatMesh:
         weights /= weights.sum(axis=1, keepdims=True) + 1e-9
         falloff = np.exp(-((dist.min(axis=1) / (FUR_FOLLOW[1] * self.face_width)) ** 2))
         self.fur_follow = weights * falloff[:, None]  # (fur points, face points)
+        self.eye_weights = _eye_weights(face)
         # Rotate around the middle of the face so the head turns in place.
         self.pivot = np.array([face[:, 0].mean(), face[1, 1], np.median(face[:, 2])])
         self.focal = CAMERA_DISTANCE * self.face_width
@@ -256,14 +376,14 @@ class CatMesh:
             [(self.vbo, "3f", "in_pos"), (ctx.buffer(uv.tobytes()), "2f", "in_uv")],
             ctx.buffer(triangles.astype("i4").tobytes()),
         )
-        lip_ts = np.zeros((len(self.rest), 2), "f4")
-        lip_ts[LOWER_INNER_LIP[1:-1], 0] = 1.0
-        steps = np.linspace(0, 1, len(UPPER_INNER_LIP))
-        lip_ts[UPPER_INNER_LIP, 1] = steps
-        lip_ts[LOWER_INNER_LIP, 1] = steps
+        self.mouth_size = np.linalg.norm(face[78, :2] - face[308, :2]) / self.face_width
+        self.mouth = np.zeros((len(self.rest), 3), "f4")  # per vertex: s, d, g (see shader)
+        across = np.linspace(0, 1, len(UPPER_INNER_LIP))
+        self.mouth[UPPER_INNER_LIP, 0] = self.mouth[LOWER_INNER_LIP, 0] = across
+        self.mouth_vbo = ctx.buffer(self.mouth.tobytes(), dynamic=True)
         self.mouth_vao = ctx.vertex_array(
             renderer.mouth_prog,
-            [(self.vbo, "3f", "in_pos"), (ctx.buffer(lip_ts.tobytes()), "2f", "in_ts")],
+            [(self.vbo, "3f", "in_pos"), (self.mouth_vbo, "3f", "in_mouth")],
             ctx.buffer(_mouth_triangles().astype("i4").tobytes()),
         )
 
@@ -275,11 +395,24 @@ class CatMesh:
         """Screen position of the cat's face center and its width in screen px."""
         return self.offset + self.pivot[:2] * self.scale, self.face_width * self.scale
 
-    def _project(self, offsets: np.ndarray, rotation: np.ndarray) -> np.ndarray:
-        """Deform the face, rotate the head, and project to NDC."""
+    def _steady_eyes(self, offsets: np.ndarray) -> np.ndarray:
+        """Offsets with the eye regions moving rigidly with their corners."""
+        out = offsets.copy()
+        for weights, corners in zip(self.eye_weights, EYE_CORNERS):
+            rigid = offsets[list(corners)].mean(axis=0)
+            out += weights[:, None] * (rigid - out)
+        return out
+
+    def _shape(self, offsets: np.ndarray) -> np.ndarray:
+        """The mesh deformed by the face offsets, unrotated."""
+        offsets = self._steady_eyes(offsets)
         shaped = self.rest.copy()
         shaped[: self.face_count] += offsets
         shaped[self.face_count:] += self.fur_follow @ offsets
+        return shaped
+
+    def _project(self, shaped: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+        """Rotate the shaped mesh and project it to NDC."""
         pos = (shaped - self.pivot) @ rotation.T + self.pivot
         # Perspective relative to the unrotated pose, so at rest the mesh matches the photo.
         depth = lambda z: self.focal / (self.focal + z - self.pivot[2])
@@ -292,17 +425,33 @@ class CatMesh:
             (pos[:, 2] - self.pivot[2]) / (DEPTH_RANGE * self.face_width),
         ]).astype("f4")
 
+    def _update_mouth(self, shaped: np.ndarray, rotation: np.ndarray):
+        upper, lower = shaped[UPPER_INNER_LIP], shaped[LOWER_INNER_LIP]
+        gaps = np.maximum(lower[:, 1] - upper[:, 1], 0) / self.face_width
+        self.mouth[UPPER_INNER_LIP, 1] = 0
+        self.mouth[LOWER_INNER_LIP, 1] = gaps
+        self.mouth[UPPER_INNER_LIP, 2] = self.mouth[LOWER_INNER_LIP, 2] = gaps
+        self.mouth_vbo.write(self.mouth.tobytes())
+        prog = self.renderer.mouth_prog
+        gap = gaps[1:-1].mean()
+        teeth = (gap - TEETH_SHOW[0]) / (TEETH_SHOW[1] - TEETH_SHOW[0])
+        prog["teeth_amount"].value = float(np.clip(teeth, 0, 1))
+        prog["mouth_size"].value = float(self.mouth_size)
+        prog["mouth_span"].value = float(np.linalg.norm(upper[-1, :2] - upper[0, :2]) / self.face_width)
+        # A point one face width deeper moves by rotation[:2, 2] (image x, y).
+        prog["turn"].value = tuple(float(v) for v in rotation[:2, 2])
+
     def render(self, sprite: np.ndarray, offsets: np.ndarray, rotation: np.ndarray) -> np.ndarray:
         """Draw the cat with face offsets (478, 3) and head rotation; returns BGR."""
         if sprite is not self._uploaded:  # unchanged while the eyes are open
             self.texture.write(np.ascontiguousarray(sprite).tobytes())
             self.texture.build_mipmaps()
             self._uploaded = sprite
-        self.vbo.write(self._project(offsets, rotation).tobytes())
-        gap = np.mean(offsets[LOWER_INNER_LIP, 1] - offsets[UPPER_INNER_LIP, 1]) / self.face_width
-        teeth = np.clip((gap - TEETH_SHOW[0]) / (TEETH_SHOW[1] - TEETH_SHOW[0]), 0, 1)
+        shaped = self._shape(offsets)
+        self.vbo.write(self._project(shaped, rotation).tobytes())
         r = self.renderer
-        r.mouth_prog["teeth_amount"].value = float(teeth)
+        self._update_mouth(shaped, rotation)
+
 
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)

@@ -115,3 +115,20 @@ def test_a_click_during_the_call_does_not_pick_later():
     controls.handle(ord("c"), state)
     controls.handle(-1 & 0xFF, state)
     assert controls.picking and controls.current == 0
+
+
+def test_closed_eyes_count_as_a_blink_even_with_a_weak_score():
+    from catcam.cat_face import EYES
+
+    rng = np.random.default_rng(1)
+    neutral = rng.normal(size=(478, 3)) * 5 + 300
+    for upper, lower in EYES:  # open eyes: lower lid 12 px below the upper
+        neutral[upper, 0] = neutral[lower, 0] = np.linspace(0, 60, len(upper)) + neutral[upper[0], 0]
+        neutral[lower, 1] = neutral[upper, 1] + 12
+        neutral[[upper[0], upper[-1]], 1] = neutral[upper[0], 1]
+    shut = neutral.copy()
+    for upper, lower in EYES:
+        shut[upper[1:-1], 1] = shut[lower[1:-1], 1] - 1
+    weak = {"eyeBlinkLeft": 0.1, "eyeBlinkRight": 0.1}
+    np.testing.assert_allclose(blinks(weak, neutral, neutral), 0)
+    assert blinks(weak, shut, neutral).min() == 1.0

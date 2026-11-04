@@ -23,7 +23,7 @@ import pyvirtualcam
 from mediapipe.tasks.python import BaseOptions, vision
 
 from catcam import cats as cat_assets
-from catcam.cat_face import CatFace
+from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.face_motion import ExpressionTransfer
 from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
@@ -42,8 +42,11 @@ BLINK_SMOOTHING = 0.7  # 0..1, higher = snappier; kept snappy so blinks show
 ROTATION_MIN_CUTOFF, ROTATION_BETA = 0.8, 3.5
 EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA = 3.0, 60.0
 
-# Blendshape score range mapped to 0..1 eye closedness.
-BLINK_RANGE = (0.35, 0.7)
+# Blendshape score range mapped to 0..1 eye closedness...
+BLINK_RANGE = (0.3, 0.6)
+# ...and, as some people's blink score stays low, also how much the eye
+# opening shrank compared to your neutral face.
+SHUT_RANGE = (0.35, 0.75)
 # The neutral face only adapts while all of these are low.
 EXPRESSIVE = [
     "jawOpen", "mouthSmileLeft", "mouthSmileRight", "mouthPucker", "mouthFunnel",
@@ -102,14 +105,28 @@ def ramp(value, lo, hi):
     return min(max((value - lo) / (hi - lo), 0.0), 1.0)
 
 
-def blinks(scores):
+def eye_openness(face: np.ndarray) -> np.ndarray:
+    """Height of each eye's opening relative to its width (image-left, image-right)."""
+    openness = []
+    for upper, lower in EYES:
+        middle = slice(2, -2)  # skip the corners
+        height = np.mean(face[lower[middle], 1] - face[upper[middle], 1])
+        openness.append(height / (np.linalg.norm(face[upper[0], :2] - face[upper[-1], :2]) + 1e-6))
+    return np.array(openness)
+
+
+def blinks(scores, face=None, neutral=None):
     """Eye closedness (image-left, image-right), each 0..1."""
     # MediaPipe names eyes from the person's view: their right eye is on the
     # image's left.
-    return np.array([
+    closed = np.array([
         ramp(scores["eyeBlinkRight"], *BLINK_RANGE),
         ramp(scores["eyeBlinkLeft"], *BLINK_RANGE),
     ])
+    if face is not None and neutral is not None:
+        shrunk = 1 - eye_openness(face) / np.maximum(eye_openness(neutral), 1e-6)
+        closed = np.maximum(closed, [ramp(v, *SHUT_RANGE) for v in shrunk])
+    return closed
 
 
 class FaceState:
@@ -143,7 +160,8 @@ class FaceState:
             self.neutral_pose = pose
         self.head = self.rotation_filter(to_vector(relative_rotation(pose, self.neutral_pose)), dt)
         scores = {c.category_name: c.score for c in result.face_blendshapes[0]}
-        self.blink = self.blink + BLINK_SMOOTHING * (blinks(scores) - self.blink)
+        closed = blinks(scores, self.face, self.transfer.neutral)
+        self.blink = self.blink + BLINK_SMOOTHING * (closed - self.blink)
         relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
         self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
 

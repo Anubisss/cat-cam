@@ -26,7 +26,7 @@ def meshes(renderer, real_cats):
 
 
 def _holes_in_face(mesh, image, offsets, rotation):
-    ndc = mesh._project(offsets, rotation)
+    ndc = mesh._project(mesh._shape(offsets), rotation)
     px = np.column_stack([(ndc[:, 0] + 1) / 2 * OUT[0], (1 - ndc[:, 1]) / 2 * OUT[1]])
     mask = np.zeros(image.shape[:2], np.uint8)
     inner = px[INNER_FACE]
@@ -76,3 +76,50 @@ def test_open_mouth_shows_the_inside(meshes):
         window = np.s_[y - 2:y + 3, x - 2:x + 3]
         assert np.abs(opened[window].astype(int) - closed[window]).mean() > 20, cat.name
         assert _holes_in_face(mesh, opened, offsets, np.eye(3)) == 0, cat.name
+
+
+def test_eyelid_motion_does_not_bend_the_mesh(meshes):
+    """Your eyelids travel further than the cats' eyes are tall; the eye
+    regions move rigidly with their corners instead (the lids close in the
+    texture)."""
+    from catcam.cat_face import EYES
+
+    for cat, mesh in meshes:
+        offsets = np.zeros((478, 3))
+        for upper, _ in EYES:
+            offsets[upper[1:-1], 1] = 0.1 * mesh.face_width  # upper lids pulled far down
+        brow = 105
+        offsets[brow, 1] = -0.02 * mesh.face_width
+        steady = mesh._steady_eyes(offsets)
+        for upper, lower in EYES:
+            np.testing.assert_allclose(steady[upper + lower], 0, atol=1e-9)
+        assert steady[brow, 1] == pytest.approx(offsets[brow, 1]), cat.name  # brows still move
+
+
+def _open(mesh, amount):
+    from catcam.cat_mesh import UPPER_INNER_LIP
+
+    up = mesh.rest[UPPER_INNER_LIP]
+    order = np.argsort(up[:, 0])
+    line = np.interp(mesh.rest[:478, 0], up[order, 0], up[order, 1])
+    weight = np.clip((mesh.rest[:478, 1] - line) / (0.01 * mesh.face_width), 0, 1)
+    weight[LOWER_INNER_LIP[1:-1]] = 1
+    weight[UPPER_INNER_LIP] = 0
+    offsets = np.zeros((478, 3))
+    offsets[:, 1] = weight * amount * mesh.face_width
+    return offsets
+
+
+def test_teeth_keep_their_size_as_the_mouth_opens(meshes):
+    for cat, mesh in meshes:
+        lengths = []
+        for amount in (0.07, 0.14):
+            image = mesh.render(cat.sprite, _open(mesh, amount), np.eye(3))
+            top = (mesh.offset + cat.points[13, :2] * mesh.scale).astype(int)
+            x = top[0] + int(0.025 * mesh.face_width * mesh.scale)  # on a front tooth, off the gap
+            column = image[top[1]:top[1] + int(0.2 * mesh.face_width * mesh.scale), x].astype(int)
+            bright = column.mean(axis=1) > 150  # enamel
+            runs = np.diff(np.flatnonzero(np.diff(np.concatenate([[0], bright, [0]]))))[::2]
+            lengths.append(runs.max() if len(runs) else 0)  # the longest bright stretch: a tooth
+        assert lengths[0] > 3, cat.name
+        assert abs(lengths[0] - lengths[1]) <= max(2, 0.2 * lengths[0]), (cat.name, lengths)

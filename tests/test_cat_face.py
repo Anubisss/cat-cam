@@ -31,3 +31,16 @@ def test_eye_outside_the_sprite_is_ignored(real_cats):
     points[[i for contour in EYES[0] for i in contour], 0] = -50
     face = CatFace(cat.sprite, points)
     assert face.render((1.0, 1.0)).shape == cat.sprite.shape
+
+
+def test_snapped_eyes_stay_near_the_landmarks(real_cats):
+    from catcam.cat_face import MAX_CORNER_SHIFT, MAX_LID_SHIFT, snap_eyes
+
+    for cat in real_cats:
+        snapped = snap_eyes(cat.sprite[..., :3], cat.points[:, :2])
+        for (upper, lower), (up_idx, lo_idx) in zip(snapped, EYES):
+            width = np.ptp(cat.points[up_idx, 0])
+            limit = (max(MAX_LID_SHIFT, MAX_CORNER_SHIFT) + 0.01) * width
+            assert np.abs(upper - cat.points[up_idx, :2]).max() <= limit, cat.name
+            assert np.abs(lower - cat.points[lo_idx, :2]).max() <= limit, cat.name
+            assert (lower[1:-1, 1] >= upper[1:-1, 1]).all(), cat.name  # still an open eye
