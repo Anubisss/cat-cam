@@ -26,6 +26,7 @@ from catcam.paths import ASSETS, FACE_MIRROR, PORTRAITS
 
 TEXTURE_SIZE = 1024  # longest side of the stored cutout
 BORDER = 20  # px of portrait border sampled for the background colour
+SOLID_INSIDE = 0.015  # of the image size: deeper inside the cat than this is fully opaque
 
 
 def cut_out(bgr: np.ndarray) -> np.ndarray:
@@ -34,12 +35,21 @@ def cut_out(bgr: np.ndarray) -> np.ndarray:
 
     session = new_session("isnet-general-use")
     rgba = remove(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), session=session)
-    # Keep only the cat itself (drops faint background leftovers).
-    mask = (rgba[..., 3] > 128).astype(np.uint8)
+    soft = rgba[..., 3].astype(np.float32) / 255
+    # Keep only the cat itself (drops faint background leftovers), with its
+    # silhouette filled in.
+    mask = (rgba[..., 3] > 20).astype(np.uint8)
     _, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
-    biggest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-    alpha = cv2.GaussianBlur((labels == biggest).astype(np.float32), (5, 5), 0)
-    alpha = np.minimum(alpha, rgba[..., 3] / 255)
+    biggest = (labels == 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])).astype(np.uint8)
+    contours, _ = cv2.findContours(biggest, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    filled = cv2.drawContours(np.zeros_like(biggest), contours, -1, 1, -1)
+    # The matting model can leave dark fur on a dark backdrop half transparent;
+    # only the fringe keeps its soft alpha, the inside is solid.
+    edge = max(int(SOLID_INSIDE * max(bgr.shape[:2])), 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * edge + 1, 2 * edge + 1))
+    solid = cv2.GaussianBlur(cv2.erode(filled, kernel).astype(np.float32), (0, 0), edge / 2)
+    outline = cv2.GaussianBlur(filled.astype(np.float32), (5, 5), 0)
+    alpha = np.minimum(np.maximum(soft * filled, solid), outline)
     return np.dstack([bgr, (alpha * 255).astype(np.uint8)])
 
 
