@@ -2,7 +2,8 @@
 
 Be a cat in your Zoom calls. Pick one of six cats; it turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile, open
-mouth with teeth) and your hands become paws.
+mouth with teeth) and your hands become paws. Its ears perk up when you raise
+your brows, flatten when you frown, and twitch now and then.
 
 Your own face is never sent anywhere. Only the drawn cat goes out to the
 virtual camera, and everything runs locally on your computer.
@@ -134,6 +135,7 @@ These constants sit at the top of their files:
 | `EXPRESSION_MIN_CUTOFF`, `EXPRESSION_BETA` | `catcam/app.py` | face smoothing: lower cutoff means less jitter, higher beta means less lag |
 | `ROTATION_MIN_CUTOFF`, `ROTATION_BETA` | `catcam/app.py` | the same for head movement |
 | `BLINK_RANGE` | `catcam/app.py` | how far you close your eyes before the cat blinks |
+| `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
 
@@ -148,8 +150,9 @@ These constants sit at the top of their files:
 4. The cat photo is a textured 3D mesh. It is deformed by your expression,
    rotated by your head pose and drawn with OpenGL. The mouth's inside and
    teeth are drawn in the gap between the lips (`catcam/cat_mesh.py`).
-5. Blinks lower the cat's eyelids in its texture (`catcam/cat_face.py`), and
-   paws are drawn where your hands are (`catcam/paws.py`).
+5. Blinks lower the cat's eyelids in its texture (`catcam/cat_face.py`), the
+   ears bend about a hinge below their tips (`catcam/ears.py`), and paws are
+   drawn where your hands are (`catcam/paws.py`).
 6. The frame goes to the OBS virtual camera through pyvirtualcam.
 
 ## Development
@@ -166,6 +169,7 @@ catcam/
   cats.py          finding and loading prepared cats
   cat_mesh.py      the 3D head mesh and its OpenGL rendering
   cat_face.py      eyelids
+  ears.py          ear movement
   face_motion.py   expression transfer
   head_pose.py     head rotation and the One Euro smoothing filter
   paws.py          paws

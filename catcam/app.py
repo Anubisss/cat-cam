@@ -25,6 +25,7 @@ from mediapipe.tasks.python import BaseOptions, vision
 from catcam import cats as cat_assets
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
+from catcam.ears import EarMotion
 from catcam.face_motion import ExpressionTransfer
 from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
@@ -141,6 +142,8 @@ class FaceState:
         self.neutral_pose = None
         self.head = np.zeros(3)  # rotation vector; 0 = facing the viewer
         self.blink = np.zeros(2)
+        self.ear_motion = EarMotion()
+        self.ears = np.zeros(2)  # ear angles, see catcam.ears
         self.offsets = np.zeros((478, 3))  # in face widths
         self.face = None  # last seen face landmarks in px
         self.last_seen = None
@@ -152,6 +155,7 @@ class FaceState:
 
     def update(self, result, cam_size, dt: float, now: float):
         if not result.face_landmarks:  # no face -> keep the last pose and expression
+            self.ears = self.ear_motion.update(None, dt, now)
             return
         self.face = landmarks_px(result.face_landmarks[0], *cam_size)
         self.last_seen = now
@@ -162,6 +166,7 @@ class FaceState:
             self.neutral_pose = pose
         self.head = self.rotation_filter(to_vector(relative_rotation(pose, self.neutral_pose)), dt)
         scores = {c.category_name: c.score for c in result.face_blendshapes[0]}
+        self.ears = self.ear_motion.update(scores, dt, now)
         closed = blinks(scores, self.face, self.transfer.neutral)
         self.blink = self.blink + BLINK_SMOOTHING * (closed - self.blink)
         relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
@@ -171,7 +176,7 @@ class FaceState:
 def render(cat: Cat, state: FaceState, paws: Paws) -> np.ndarray:
     sprite = cat.eyelids.render(blink=tuple(state.blink))
     offsets = state.transfer.to_cat(state.offsets, cat.points)
-    return paws.draw(cat.mesh.render(sprite, offsets, to_matrix(state.head)), cat.paw)
+    return paws.draw(cat.mesh.render(sprite, offsets, to_matrix(state.head), state.ears), cat.paw)
 
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None) -> np.ndarray:

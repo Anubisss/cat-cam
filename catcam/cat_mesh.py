@@ -16,6 +16,7 @@ import numpy as np
 from scipy.spatial import Delaunay
 
 from catcam.cat_face import EYES
+from catcam.ears import bend, find_ears
 
 OUTLINE_POINTS = 90
 SKULL_DEPTH = 0.15  # head outline sits this far (in face widths) behind the nearest face points
@@ -38,7 +39,7 @@ LIP_SEAM = 0.0015  # half the gap between the lips of the closed mouth
 MOUTH_MIN = 0.33
 MOUTH_GROW = (1.3, 2.5)
 # Framing: ear tips and chin as fractions of the screen height.
-TOP_MARGIN, CHIN_LINE = 0.02, 0.93
+TOP_MARGIN, CHIN_LINE = 0.04, 0.93  # room above for perked ears
 
 # Around each eye the face moves rigidly: a person's eyelids travel further
 # than these squinting cats' eyes are tall, so copying them would fold the
@@ -395,6 +396,7 @@ class CatMesh:
         photo = np.vstack([face, skull, outline])  # where each vertex is in the texture
         self.rest = _bigger_mouth(photo, face, self.face_width)
         face = self.rest[: self.face_count]
+        self.ears = find_ears(self.rest, outline_xy, self.face_count, self.face_width)
         # The fur follows the nearby face points (e.g. cheeks widening in a
         # smile) with a falloff, so the face edge can't fold over the fur.
         fur = self.rest[self.face_count:, :2]
@@ -451,13 +453,13 @@ class CatMesh:
             out += rigid[:, None] * (anchor @ out - out)
         return out
 
-    def _shape(self, offsets: np.ndarray) -> np.ndarray:
-        """The mesh deformed by the face offsets, unrotated."""
+    def _shape(self, offsets: np.ndarray, ears=(0.0, 0.0)) -> np.ndarray:
+        """The mesh deformed by the face offsets and ear angles, unrotated."""
         offsets = self._steady_eyes(offsets)
         shaped = self.rest.copy()
         shaped[: self.face_count] += offsets
         shaped[self.face_count:] += self.fur_follow @ offsets
-        return shaped
+        return bend(shaped, self.ears, ears)
 
     def _project(self, shaped: np.ndarray, rotation: np.ndarray) -> np.ndarray:
         """Rotate the shaped mesh and project it to NDC."""
@@ -489,18 +491,18 @@ class CatMesh:
         # A point one face width deeper moves by rotation[:2, 2] (image x, y).
         prog["turn"].value = tuple(float(v) for v in rotation[:2, 2])
 
-    def render(self, sprite: np.ndarray, offsets: np.ndarray, rotation: np.ndarray) -> np.ndarray:
-        """Draw the cat with face offsets (478, 3) and head rotation; returns BGR."""
+    def render(self, sprite: np.ndarray, offsets: np.ndarray, rotation: np.ndarray,
+               ears=(0.0, 0.0)) -> np.ndarray:
+        """Draw the cat with face offsets (478, 3), head rotation and ear angles
+        (radians, image-left and image-right ear, positive = flattened); returns BGR."""
         if sprite is not self._uploaded:  # unchanged while the eyes are open
             self.texture.write(np.ascontiguousarray(sprite).tobytes())
             self.texture.build_mipmaps()
             self._uploaded = sprite
-        shaped = self._shape(offsets)
+        shaped = self._shape(offsets, ears)
         self.vbo.write(self._project(shaped, rotation).tobytes())
         r = self.renderer
         self._update_mouth(shaped, rotation)
-
-
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)
         r.ctx.enable(moderngl.DEPTH_TEST | moderngl.BLEND)
