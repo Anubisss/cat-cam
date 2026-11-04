@@ -31,7 +31,7 @@ from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
 from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
 from catcam.paths import FACE_MODEL, HAND_MODEL
-from catcam.paws import Paws, PawSprite, paw_sprite, paw_style
+from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker, put_text
 
@@ -70,7 +70,7 @@ class Cat:
     points: np.ndarray
     eyelids: CatFace
     mesh: CatMesh
-    paw: PawSprite
+    paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
     sprite: np.ndarray
     background: np.ndarray
 
@@ -92,7 +92,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             points=a.points,
             eyelids=CatFace(a.sprite, a.points[:, :2]),
             mesh=CatMesh(renderer, a.sprite, a.points, a.background),
-            paw=paw_sprite(paw_style(a.sprite, a.points)),
+            paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
             sprite=a.sprite,
             background=a.background,
         ))

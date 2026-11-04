@@ -2,7 +2,9 @@
 
 For every all_cats/<Name>.png this cuts the cat out of its background, finds
 its face landmarks and writes assets/cats/<Name>/cutout.png and face.npz.
-Already prepared cats are skipped unless --force is given.
+Paw photos next to it (<Name>PawsFront.png, <Name>PawsBack.png) become its
+paw sprites (see catcam.paw_photos). Already prepared cats and paws are
+skipped unless --force is given.
 
 Run after adding or replacing a portrait:
 
@@ -15,6 +17,8 @@ import sys
 import cv2
 import numpy as np
 
+from catcam import paw_photos
+from catcam.cats import portraits as find_portraits
 from catcam.landmark_fit import (
     FitError,
     Portrait,
@@ -83,22 +87,41 @@ def main():
     parser.add_argument("--force", action="store_true", help="redo cats that are already prepared")
     args = parser.parse_args()
 
-    portraits = {p.stem: p for p in sorted(PORTRAITS.glob("*.png"))}
+    portraits = find_portraits()
     if not portraits:
         sys.exit(f"No portraits found in {PORTRAITS}.")
     unknown = set(args.names) - set(portraits)
     if unknown:
         sys.exit(f"No portrait for: {', '.join(sorted(unknown))} (looked in {PORTRAITS}).")
-    todo = [n for n in (args.names or portraits) if args.force or not (ASSETS / n / "face.npz").exists()]
-    if not todo:
+    names = args.names or list(portraits)
+    todo = [n for n in names if args.force or not (ASSETS / n / "face.npz").exists()]
+    paws_todo = [n for n in names if paw_photos.has_photos(n, PORTRAITS) and (args.force or not all(
+        paw_photos.paw_files(n, ASSETS)[v, h].exists()
+        for v in paw_photos.has_photos(n, PORTRAITS) for h in paw_photos.HANDS))]
+    if not todo and not paws_todo:
         print("All cats are prepared already (use --force to redo them).")
         return
 
-    print("Cutting out cats...")
     from rembg import new_session
 
     session = new_session("isnet-general-use")
-    images, cutouts, failed = {}, {}, []
+    failed = []
+    for name in paws_todo:
+        print(f"Cutting out {name}'s paws...")
+        try:
+            views = paw_photos.prepare_paws(name, PORTRAITS, ASSETS, lambda bgr: cut_out(bgr, session))
+        except (CutoutError, ValueError) as e:
+            print(f"  {name}: {e}, skipped.")
+            failed.append(name)
+            continue
+        print(f"  saved {', '.join(views)} views")
+    if not todo:
+        if failed:
+            sys.exit(f"Failed: {', '.join(failed)}")
+        return
+
+    print("Cutting out cats...")
+    images, cutouts = {}, {}
     for name, path in portraits.items():
         image = cv2.imread(str(path), cv2.IMREAD_COLOR)
         if image is None:

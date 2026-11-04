@@ -2,7 +2,8 @@
 
 Be a cat in your Zoom calls. Pick one of six cats; it turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile, open
-mouth with fangs) and your hands become paws. Its ears perk up when you raise
+mouth with fangs) and your hands become its paws: the top of the paw when
+you show the back of your hand, the soft toe beans when you show your palm. Its ears perk up when you raise
 your brows, flatten when you frown, and twitch now and then, and the side of
 its head that turns away from the light falls into shadow.
 
@@ -79,7 +80,8 @@ how it looks at the start, and the way you sit at the start counts as "looking
 at the viewer". If the cat looks grumpy or turned while you are relaxed, press
 `n`.
 
-Raise your hands into the camera's view for paws.
+Raise your hands into the camera's view for paws. Turn a hand around to
+show the other side of the paw.
 
 ### Keys (in the Cat Cam window)
 
@@ -124,6 +126,12 @@ uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera ope
 
    The results go to `assets/cats/<Name>/`. Already prepared cats are skipped;
    add `--force` to redo them, or name cats to do only those.
+   Optionally add paw photos next to it: `all_cats/<Name>PawsFront.png`
+   (the front legs seen from the front, as if the cat stood facing you) and
+   `all_cats/<Name>PawsBack.png` (the soles). In each, put the left paw on
+   the left and the right paw on the right, separated by a vertical purple
+   line. `prepare` cuts them out too; a cat without paw photos gets drawn
+   paws in its colours.
 3. Run `uv run cat-cam`. The new cat appears in the picker.
 
 ## Tuning
@@ -156,7 +164,8 @@ These constants sit at the top of their files:
    coloured to match the cat's lips (`catcam/cat_mesh.py`).
 5. Blinks lower the cat's eyelids in its texture (`catcam/cat_face.py`), the
    ears bend about a hinge below their tips (`catcam/ears.py`), and paws are
-   drawn where your hands are (`catcam/paws.py`).
+   drawn where your hands are (`catcam/paws.py`), showing their top or their
+   sole depending on which way your hand faces.
 6. The frame goes to the OBS virtual camera through pyvirtualcam.
 
 ## Development
@@ -178,6 +187,7 @@ catcam/
   face_motion.py   expression transfer
   head_pose.py     head rotation and the One Euro smoothing filter
   paws.py          paws
+  paw_photos.py    turns paw photos into paw sprites (used by prepare)
   prepare.py       turns all_cats/*.png into assets/cats/*
   landmark_fit.py  finds a cat's face points (used by prepare)
 all_cats/          source portraits

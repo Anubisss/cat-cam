@@ -1,9 +1,12 @@
 """Cat paws that follow your hands.
 
-Each tracked hand becomes a socked paw with pink toe beans on a furry arm,
-coloured like the cat: the arm takes the fur of its cheeks, the sock the fur of
-its chin. Its position is taken relative to your face, so a hand next to your
-chin puts the paw next to the cat's chin.
+Each tracked hand becomes one of the cat's paws. Cats with paw photos (see
+catcam.paw_photos) show the top of the paw when you show the back of your
+hand and the sole when you show your palm, your left hand as the cat's left
+paw. Cats without photos get a drawn socked paw with pink toe beans,
+coloured like the cat: the arm takes the fur of its cheeks, the sock the fur
+of its chin. A paw's position is taken relative to your face, so a hand next
+to your chin puts the paw next to the cat's chin.
 """
 
 from typing import NamedTuple
@@ -18,6 +21,8 @@ PAW_MIN_CUTOFF, PAW_BETA = 1.5, 0.02
 FADE_RATE = 0.35  # how fast paws appear / disappear
 ARM_LENGTH = 14  # in paw widths
 DEFAULT_FACE_WIDTH = 0.25  # of the camera width, used until a face is seen
+PHOTO_ARM_LENGTH = 8  # paw photos' arms are extended to this many paw widths
+PALM_RANGE = (-0.25, 0.25)  # how squarely the palm faces the camera: back view up to [0], sole from [1]
 
 BEAN = (178, 165, 240)
 OUTLINE_SHADE = 0.75  # toe outlines: the sock colour, darkened
@@ -29,6 +34,7 @@ SAMPLE_RADIUS = 0.03  # in face widths
 ROUNDNESS = 0.3  # how much darker the arm and paw get toward their sides
 
 WRIST, INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP = 0, 5, 9, 13, 17
+VIEWS = ("front", "back")  # top of the paw (back of your hand), sole (palm)
 
 
 class PawStyle(NamedTuple):
@@ -124,6 +130,61 @@ def paw_sprite(style: PawStyle, width: int = 220) -> PawSprite:
     return PawSprite(sprite, np.array([cx / ss, cy / ss]), width)
 
 
+def photo_paw(image: np.ndarray) -> PawSprite:
+    """A paw photo (BGRA, toes up, arm leaving at the bottom) as a sprite, its
+    arm extended (mirrored back and forth) so it runs off-screen."""
+    alpha = image[..., 3] > 127
+    rows = alpha[: max(int(0.4 * len(alpha)), 1)].sum(axis=1)
+    paw_row = int(np.argmax(rows))
+    width = int(rows[paw_row])
+    xs = np.flatnonzero(alpha[paw_row])
+    anchor = np.array([(xs.min() + xs.max()) / 2, paw_row], float)
+    start = min(paw_row + width, len(image) - 2)  # the arm, below the paw
+    arm = image[start:]
+    pieces, height = [image], len(image)
+    while height < paw_row + PHOTO_ARM_LENGTH * width:
+        arm = arm[::-1]
+        pieces.append(arm)
+        height += len(arm)
+    return PawSprite(np.ascontiguousarray(np.concatenate(pieces)), anchor, width)
+
+
+def paw_set(photos: dict, style: PawStyle) -> dict:
+    """{(view, hand): PawSprite} from a cat's paw photos ({(view, hand): BGRA}).
+    A missing top view uses the sole, and without photos the drawn paw is used."""
+    drawn = None
+    paws = {}
+    for hand in ("left", "right"):
+        for view in VIEWS:
+            photo = photos.get((view, hand))
+            if photo is None:
+                photo = photos.get(("back", hand))
+            if photo is not None:
+                paws[view, hand] = photo_paw(photo)
+            else:
+                drawn = drawn or paw_sprite(style)
+                paws[view, hand] = drawn
+    return paws
+
+
+def palm_toward(handedness: str, pts: np.ndarray) -> float:
+    """-1 (back of the hand to the camera) .. 1 (palm to the camera).
+
+    From the 2D cross product of the hand's up direction (wrist -> middle
+    knuckle) and its knuckles (pinky -> index): on an unmirrored image a right
+    hand shows its palm when it is positive, a left hand when it is negative."""
+    up = pts[MIDDLE_MCP] - pts[WRIST]
+    across = pts[INDEX_MCP] - pts[PINKY_MCP]
+    turn = (up[0] * across[1] - up[1] * across[0]) / (np.linalg.norm(up) * np.linalg.norm(across) + 1e-6)
+    return float(turn if handedness == "Right" else -turn)
+
+
+def palm_facing(toward: float) -> float:
+    """palm_toward as 0 (show the top of the paw) .. 1 (show the sole)."""
+    t = np.clip((toward - PALM_RANGE[0]) / (PALM_RANGE[1] - PALM_RANGE[0]), 0, 1)
+    return float(t * t * (3 - 2 * t))
+
+
 class Paws:
     def __init__(self, out_width: int):
         self.out_w = out_width
@@ -147,6 +208,7 @@ class Paws:
             up /= np.linalg.norm(up) + 1e-6
             palm = 0.6 * pts[[INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]].mean(axis=0) + 0.4 * pts[WRIST]
             palm_width = np.linalg.norm(pts[INDEX_MCP] - pts[PINKY_MCP])
+            label = handedness[0].category_name
             # Placed by where the hand is relative to your face in the camera
             # frame (so hands stay on screen even though the cat fills it);
             # sized relative to your face, like a real paw next to the cat's.
@@ -154,8 +216,9 @@ class Paws:
                 *(cat_face_center + (palm - face_center) * (self.out_w / cam_w)),
                 palm_width * (cat_face_width / face_width) * PAW_SIZE,
                 *up,
+                palm_toward(label, pts),  # from the detected handedness, before any relabelling
             ])
-            detections.append((handedness[0].category_name, target))
+            detections.append((label, target))
         seen = set()
         for name, target in self._label(detections):
             slot = self.slots.setdefault(
@@ -184,33 +247,58 @@ class Paws:
         swapped = distance("Right", a) + distance("Left", b)
         return [("Left", a), ("Right", b)] if straight <= swapped else [("Right", a), ("Left", b)]
 
-    def draw(self, frame: np.ndarray, paw: PawSprite) -> np.ndarray:
+    def draw(self, frame: np.ndarray, paws) -> np.ndarray:
+        """paws: a PawSprite for every hand, or {(view, hand): PawSprite} (see paw_set)."""
         out = frame.copy()
-        frame_h, frame_w = out.shape[:2]
-        sprite_h, sprite_w = paw.image.shape[:2]
-        sprite_corners = np.array([[0, 0], [sprite_w, 0], [0, sprite_h], [sprite_w, sprite_h]], float)
-        for slot in self.slots.values():
+        for name, slot in self.slots.items():
             if slot["presence"] < 0.02 or "params" not in slot:
                 continue
-            x, y, size, ux, uy = slot["params"]
+            x, y, size, ux, uy, toward = slot["params"]
             norm = np.hypot(ux, uy) + 1e-6
-            ux, uy = ux / norm, uy / norm
-            s = size / paw.width
-            # Rotate the sprite's "up" (0, -1) onto the hand's up direction.
-            rot = s * np.array([[-uy, -ux], [ux, -uy]])
-            m = np.hstack([rot, (np.array([x, y]) - rot @ paw.anchor)[:, None]])
-            # Only warp and blend the screen area the paw covers.
-            corners = sprite_corners @ m[:, :2].T + m[:, 2]
-            x0, y0 = np.clip(np.floor(corners.min(axis=0)).astype(int), 0, (frame_w, frame_h))
-            x1, y1 = np.clip(np.ceil(corners.max(axis=0)).astype(int), 0, (frame_w, frame_h))
-            if x1 <= x0 or y1 <= y0:
-                continue
-            m[:, 2] -= (x0, y0)
-            warped = cv2.warpAffine(
-                paw.image, m, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0),
-            )
-            a = warped[..., 3:4].astype(np.float32) / 255 * slot["presence"]
-            roi = out[y0:y1, x0:x1]
-            out[y0:y1, x0:x1] = (warped[..., :3] * a + roi * (1 - a)).astype(np.uint8)
+            placement = (x, y, size, ux / norm, uy / norm)
+            if isinstance(paws, PawSprite):
+                layers = [(paws, 1.0)]
+            else:
+                palm = palm_facing(toward)
+                hand = name.lower()
+                layers = [(paws["front", hand], 1 - palm), (paws["back", hand], palm)]
+            _blend(out, [(paw, w * slot["presence"]) for paw, w in layers if w > 0.01], placement)
         return out
+
+
+def _blend(out: np.ndarray, layers, placement):
+    """Draws paws [(PawSprite, opacity)] crossfaded into out (in place), at
+    placement (x, y, size, up_x, up_y)."""
+    x, y, size, ux, uy = placement
+    frame_h, frame_w = out.shape[:2]
+    color = alpha = box = None
+    for paw, opacity in layers:
+        s = size / paw.width
+        # Rotate the sprite's "up" (0, -1) onto the hand's up direction.
+        rot = s * np.array([[-uy, -ux], [ux, -uy]])
+        m = np.hstack([rot, (np.array([x, y]) - rot @ paw.anchor)[:, None]])
+        if box is None:  # only warp and blend the screen area the first paw covers
+            sprite_h, sprite_w = paw.image.shape[:2]
+            corners = np.array([[0, 0], [sprite_w, 0], [0, sprite_h], [sprite_w, sprite_h]], float)
+            corners = corners @ m[:, :2].T + m[:, 2]
+            x0, y0 = np.clip(np.floor(corners.min(axis=0)).astype(int) - 2, 0, (frame_w, frame_h))
+            x1, y1 = np.clip(np.ceil(corners.max(axis=0)).astype(int) + 2, 0, (frame_w, frame_h))
+            if x1 <= x0 or y1 <= y0:
+                return
+            box = (x0, y0, x1, y1)
+            color = np.zeros((y1 - y0, x1 - x0, 3), np.float32)
+            alpha = np.zeros((y1 - y0, x1 - x0, 1), np.float32)
+        x0, y0, x1, y1 = box
+        m[:, 2] -= (x0, y0)
+        warped = cv2.warpAffine(
+            paw.image, m, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0),
+        )
+        a = warped[..., 3:4].astype(np.float32) / 255 * opacity
+        color += warped[..., :3] * a
+        alpha += a
+    if box is None:
+        return
+    x0, y0, x1, y1 = box
+    roi = out[y0:y1, x0:x1]
+    out[y0:y1, x0:x1] = np.clip(color + roi * (1 - np.minimum(alpha, 1)), 0, 255).astype(np.uint8)

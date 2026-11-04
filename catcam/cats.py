@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from catcam.paths import ASSETS, PORTRAITS
+from catcam.paw_photos import is_paw_photo, paw_files
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class CatAssets:
     sprite: np.ndarray  # BGRA cutout
     points: np.ndarray  # (478, 3) face landmarks in sprite px (z uses the x scale)
     background: np.ndarray  # (3,) BGR colour of the portrait's backdrop
+    paws: dict  # {(view, hand): BGRA paw photo}, see catcam.paw_photos; empty if none
 
 
 def available(assets: Path = ASSETS) -> list[str]:
@@ -27,10 +29,15 @@ def available(assets: Path = ASSETS) -> list[str]:
     )
 
 
-def unprepared(portraits: Path = PORTRAITS, assets: Path = ASSETS) -> list[str]:
+def portraits(folder: Path = PORTRAITS) -> dict[str, Path]:
+    """{name: path} of the cat portraits (not the paw photos next to them)."""
+    return {p.stem: p for p in sorted(folder.glob("*.png")) if not is_paw_photo(p.stem)}
+
+
+def unprepared(folder: Path = PORTRAITS, assets: Path = ASSETS) -> list[str]:
     """Portraits that have no prepared assets yet."""
     ready = set(available(assets))
-    return sorted(p.stem for p in portraits.glob("*.png") if p.stem not in ready)
+    return sorted(name for name in portraits(folder) if name not in ready)
 
 
 def load(name: str, assets: Path = ASSETS) -> CatAssets:
@@ -43,4 +50,8 @@ def load(name: str, assets: Path = ASSETS) -> CatAssets:
         background = face["background"].astype(np.uint8)
     if points.shape != (478, 3):
         raise ValueError(f"{folder / 'face.npz'} has {points.shape} landmarks, expected (478, 3)")
-    return CatAssets(name, sprite, points, background)
+    paws = {}
+    for key, path in paw_files(name, assets).items():
+        if path.is_file():
+            paws[key] = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    return CatAssets(name, sprite, points, background, paws)

@@ -26,10 +26,17 @@ def test_available_without_assets_folder(tmp_path):
 def test_unprepared(tmp_path):
     portraits, assets = tmp_path / "portraits", tmp_path / "assets"
     portraits.mkdir()
-    for name in ("Amy", "Bob"):
+    for name in ("Amy", "Bob", "AmyPawsFront", "BobPawsBack"):
         cv2.imwrite(str(portraits / f"{name}.png"), np.zeros((8, 8, 3), np.uint8))
     _prepare(assets, "Amy")
-    assert cats.unprepared(portraits, assets) == ["Bob"]
+    assert cats.unprepared(portraits, assets) == ["Bob"]  # paw photos aren't cats
+    assert list(cats.portraits(portraits)) == ["Amy", "Bob"]
+
+
+def test_load_reads_paw_photos(tmp_path):
+    _prepare(tmp_path, "Amy")
+    cv2.imwrite(str(tmp_path / "Amy" / "paw_back_left.png"), np.zeros((8, 4, 4), np.uint8))
+    assert list(cats.load("Amy", tmp_path).paws) == [("back", "left")]
 
 
 def test_load_rejects_bad_landmarks(tmp_path):
