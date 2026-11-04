@@ -31,6 +31,12 @@ FUR_FOLLOW = (0.1, 0.3)
 SKULL_GRID = 0.07  # spacing of the skull points
 SKULL_MARGIN = 0.03  # skull points keep this far from the face and the outline
 LIP_SEAM = 0.0015  # half the gap between the lips of the closed mouth
+# Cats with a smaller mouth than this (corner to corner, face widths) get theirs
+# enlarged, as if liquified: lips, opening and teeth grow together. The area
+# around the mouth follows with a falloff (in mouth half-widths: fully inside
+# MOUTH_GROW[0], not at all beyond [1]; half as far up and down).
+MOUTH_MIN = 0.33
+MOUTH_GROW = (1.3, 2.5)
 # Framing: ear tips and chin as fractions of the screen height.
 TOP_MARGIN, CHIN_LINE = 0.02, 0.93
 
@@ -239,6 +245,22 @@ def _outline_depth(outline_xy: np.ndarray, face: np.ndarray, face_width: float) 
     return np.convolve(padded, np.ones(2 * k + 1) / (2 * k + 1), mode="same")[k:-k]
 
 
+def _bigger_mouth(points: np.ndarray, face: np.ndarray, face_width: float) -> np.ndarray:
+    """The points with the mouth region scaled up to at least MOUTH_MIN wide."""
+    corners = face[[78, 308]]
+    width = np.linalg.norm(corners[0, :2] - corners[1, :2])
+    grow = MOUTH_MIN * face_width / width
+    if grow <= 1:
+        return points
+    centre = (corners.mean(axis=0) + face[[13, 14]].mean(axis=0)) / 2
+    d = (points[:, :2] - centre[:2]) / (np.array([1.0, 0.5]) * width / 2)
+    t = np.clip((np.linalg.norm(d, axis=1) - MOUTH_GROW[0]) / (MOUTH_GROW[1] - MOUTH_GROW[0]), 0, 1)
+    weight = 1 - t * t * (3 - 2 * t)
+    out = points.copy()
+    out[:, :2] += (grow - 1) * weight[:, None] * (points[:, :2] - centre[:2])
+    return out
+
+
 def _skull_points(alpha: np.ndarray, face: np.ndarray, face_width: float, outline: np.ndarray):
     """Grid points in the fur around the face, with depth easing from the face
     edge back to the outline, so the head bends smoothly when it turns."""
@@ -370,7 +392,9 @@ class CatMesh:
         outline = np.column_stack([outline_xy, _outline_depth(outline_xy, face, self.face_width)])
         skull = _skull_points(sprite[..., 3], face, self.face_width, outline)
 
-        self.rest = np.vstack([face, skull, outline])
+        photo = np.vstack([face, skull, outline])  # where each vertex is in the texture
+        self.rest = _bigger_mouth(photo, face, self.face_width)
+        face = self.rest[: self.face_count]
         # The fur follows the nearby face points (e.g. cheeks widening in a
         # smile) with a falloff, so the face edge can't fold over the fur.
         fur = self.rest[self.face_count:, :2]
@@ -394,8 +418,8 @@ class CatMesh:
 
         ctx = renderer.ctx
         self.vbo = ctx.buffer(reserve=len(self.rest) * 3 * 4, dynamic=True)
-        uv = (self.rest[:, :2] / (tex_w, tex_h)).astype("f4")
-        triangles = _face_triangles(self.rest[:, :2], self.face_width)
+        uv = (photo[:, :2] / (tex_w, tex_h)).astype("f4")
+        triangles = _face_triangles(photo[:, :2], self.face_width)
         self.face_vao = ctx.vertex_array(
             renderer.face_prog,
             [(self.vbo, "3f", "in_pos"), (ctx.buffer(uv.tobytes()), "2f", "in_uv")],

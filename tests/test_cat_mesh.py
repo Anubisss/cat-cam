@@ -125,3 +125,13 @@ def test_teeth_keep_their_size_as_the_mouth_opens(meshes):
             lengths.append(runs.max() if len(runs) else 0)  # the longest bright stretch: a tooth
         assert lengths[0] > 3, cat.name
         assert abs(lengths[0] - lengths[1]) <= max(2, 0.2 * lengths[0]), (cat.name, lengths)
+
+
+def test_small_mouths_are_enlarged(meshes):
+    from catcam.cat_mesh import MOUTH_MIN
+
+    for cat, mesh in meshes:
+        assert mesh.mouth_size >= MOUTH_MIN - 1e-6, cat.name
+        # Away from the mouth the cat is unchanged; the nose barely moves.
+        np.testing.assert_allclose(mesh.rest[[10, 33, 263], :2], cat.points[[10, 33, 263], :2])
+        np.testing.assert_allclose(mesh.rest[1, :2], cat.points[1, :2], atol=0.01 * mesh.face_width)
