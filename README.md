@@ -42,7 +42,7 @@ virtual camera, and everything runs locally on your computer.
 3. **Get the code**:
 
    ```sh
-   git clone <this repository> cat-cam
+   git clone https://github.com/tarrcimar/cat-cam.git
    cd cat-cam
    ```
 
