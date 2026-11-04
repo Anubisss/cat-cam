@@ -3,7 +3,8 @@
 Be a cat in your Zoom calls. Pick one of six cats; it turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile, open
 mouth with teeth) and your hands become paws. Its ears perk up when you raise
-your brows, flatten when you frown, and twitch now and then.
+your brows, flatten when you frown, and twitch now and then, and the side of
+its head that turns away from the light falls into shadow.
 
 Your own face is never sent anywhere. Only the drawn cat goes out to the
 virtual camera, and everything runs locally on your computer.
@@ -136,6 +137,7 @@ These constants sit at the top of their files:
 | `ROTATION_MIN_CUTOFF`, `ROTATION_BETA` | `catcam/app.py` | the same for head movement |
 | `BLINK_RANGE` | `catcam/app.py` | how far you close your eyes before the cat blinks |
 | `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
+| `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
 
@@ -148,7 +150,8 @@ These constants sit at the top of their files:
    rotation and distance. What remains is your expression. That is mapped onto
    the cat's points (`catcam/face_motion.py`).
 4. The cat photo is a textured 3D mesh. It is deformed by your expression,
-   rotated by your head pose and drawn with OpenGL. The mouth's inside and
+   rotated by your head pose and drawn with OpenGL, shaded by how much each
+   part turned toward or away from the light (`catcam/lighting.py`). The mouth's inside and
    teeth are drawn in the gap between the lips (`catcam/cat_mesh.py`).
 5. Blinks lower the cat's eyelids in its texture (`catcam/cat_face.py`), the
    ears bend about a hinge below their tips (`catcam/ears.py`), and paws are
@@ -170,6 +173,7 @@ catcam/
   cat_mesh.py      the 3D head mesh and its OpenGL rendering
   cat_face.py      eyelids
   ears.py          ear movement
+  lighting.py      shading as the head turns
   face_motion.py   expression transfer
   head_pose.py     head rotation and the One Euro smoothing filter
   paws.py          paws

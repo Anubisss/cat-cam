@@ -17,6 +17,7 @@ from scipy.spatial import Delaunay
 
 from catcam.cat_face import EYES
 from catcam.ears import bend, find_ears
+from catcam.lighting import shading, vertex_normals
 
 OUTLINE_POINTS = 90
 SKULL_DEPTH = 0.15  # head outline sits this far (in face widths) behind the nearest face points
@@ -66,21 +67,25 @@ FACE_VERTEX_SHADER = """
 #version 330
 in vec3 in_pos;
 in vec2 in_uv;
+in float in_shade;
 out vec2 uv;
+out float shade;
 void main() {
     gl_Position = vec4(in_pos, 1.0);
     uv = in_uv;
+    shade = in_shade;
 }
 """
 FACE_FRAGMENT_SHADER = """
 #version 330
 uniform sampler2D tex;
 in vec2 uv;
+in float shade;
 out vec4 color;
 void main() {
     vec4 c = texture(tex, uv);
     if (c.a < 0.02) discard;
-    color = c;
+    color = vec4(c.rgb * shade, c.a);
 }
 """
 # The inside of the mouth, drawn in the gap between the inner lips. Per vertex:
@@ -93,12 +98,15 @@ MOUTH_VERTEX_SHADER = """
 #version 330
 in vec3 in_pos;
 in vec3 in_mouth;
+in float in_shade;
 out vec3 m;
+out float shade;
 void main() {
     // Slightly in front of the lips, so no skin stretched across the opening
     // can show through; the nose etc. are far enough forward to still cover it.
     gl_Position = vec4(in_pos.xy, in_pos.z - 0.01, 1.0);
     m = in_mouth;
+    shade = in_shade;
 }
 """
 MOUTH_FRAGMENT_SHADER = """
@@ -108,6 +116,7 @@ uniform float mouth_size;    // the cat's mouth width at rest, face widths
 uniform float mouth_span;    // current mouth width, face widths
 uniform vec2 turn;           // image shift per face width of depth (from the head rotation)
 in vec3 m;
+in float shade;
 out vec4 color;
 
 const float TEETH_DEPTH = 0.015, LOWER_TEETH_DEPTH = 0.03, TONGUE_DEPTH = 0.06, THROAT_DEPTH = 0.14;
@@ -204,7 +213,7 @@ void main() {
     float lip = m.y / mouth_size, rim = gap - lip;
     c *= mix(0.45, 1.0, smoothstep(0.0, 0.05, lip)) * mix(0.6, 1.0, smoothstep(0.0, 0.03, rim));
     c *= mix(0.55, 1.0, smoothstep(0.0, 0.12, 0.5 - abs(m.x - 0.5)));  // corners
-    color = vec4(c.bgr, 1.0);  // the pipeline is BGR
+    color = vec4(c.bgr * shade, 1.0);  // the pipeline is BGR
 }
 """
 
@@ -418,13 +427,17 @@ class CatMesh:
             TOP_MARGIN * self.out_h - top * self.scale,
         ])
 
+        self.normals = vertex_normals(self.rest, self.face_width)
+
         ctx = renderer.ctx
         self.vbo = ctx.buffer(reserve=len(self.rest) * 3 * 4, dynamic=True)
+        self.shade_vbo = ctx.buffer(reserve=len(self.rest) * 4, dynamic=True)
         uv = (photo[:, :2] / (tex_w, tex_h)).astype("f4")
         triangles = _face_triangles(photo[:, :2], self.face_width)
         self.face_vao = ctx.vertex_array(
             renderer.face_prog,
-            [(self.vbo, "3f", "in_pos"), (ctx.buffer(uv.tobytes()), "2f", "in_uv")],
+            [(self.vbo, "3f", "in_pos"), (ctx.buffer(uv.tobytes()), "2f", "in_uv"),
+             (self.shade_vbo, "1f", "in_shade")],
             ctx.buffer(triangles.astype("i4").tobytes()),
         )
         self.mouth_size = np.linalg.norm(face[78, :2] - face[308, :2]) / self.face_width
@@ -434,7 +447,8 @@ class CatMesh:
         self.mouth_vbo = ctx.buffer(self.mouth.tobytes(), dynamic=True)
         self.mouth_vao = ctx.vertex_array(
             renderer.mouth_prog,
-            [(self.vbo, "3f", "in_pos"), (self.mouth_vbo, "3f", "in_mouth")],
+            [(self.vbo, "3f", "in_pos"), (self.mouth_vbo, "3f", "in_mouth"),
+             (self.shade_vbo, "1f", "in_shade")],
             ctx.buffer(_mouth_triangles().astype("i4").tobytes()),
         )
 
@@ -501,6 +515,7 @@ class CatMesh:
             self._uploaded = sprite
         shaped = self._shape(offsets, ears)
         self.vbo.write(self._project(shaped, rotation).tobytes())
+        self.shade_vbo.write(shading(self.normals, rotation).astype("f4").tobytes())
         r = self.renderer
         self._update_mouth(shaped, rotation)
         r.msaa.use()
