@@ -61,7 +61,9 @@ def save(name: str, cutout: np.ndarray, points: np.ndarray, background: np.ndarr
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("names", nargs="*", help="cats to prepare (default: all portraits)")
     parser.add_argument("--force", action="store_true", help="redo cats that are already prepared")
     args = parser.parse_args()

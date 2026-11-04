@@ -1,18 +1,18 @@
 """Cat face filter for Zoom.
 
-Tracks your face and hands on the webcam and renders the cat as a 3D head mesh
-filling the screen: it turns, nods and tilts with your head, copies your whole
-face (brows, eyes, cheeks, lips, jaw) and your hands become paws. Only the
-rendered cat goes out to the virtual camera; no webcam pixels are ever sent, so
-your face is never visible.
+Pick a cat, then it copies you live: it turns, nods and tilts with your head,
+copies your whole face (brows, eyes, cheeks, lips, jaw) and your hands become
+paws. Only the rendered cat goes out to the virtual camera; no webcam pixels
+are ever sent, so your face is never visible.
 
-Run:  uv run cat_cam.py      then pick "OBS Virtual Camera" in Zoom.
-Keys in the preview window: q = quit, n = "this is my neutral face" (recalibrate).
+Run:  uv run cat-cam      then pick "OBS Virtual Camera" in Zoom.
+Keys in the preview window: c = change cat, n = "this is my neutral face"
+(recalibrate), q = quit.
 """
 
 import sys
 import time
-from pathlib import Path
+from dataclasses import dataclass
 
 import cv2
 import mediapipe as mp
@@ -20,23 +20,25 @@ import numpy as np
 import pyvirtualcam
 from mediapipe.tasks.python import BaseOptions, vision
 
-from cat_face import CatFace
-from cat_mesh import CatMesh
-from face_motion import ExpressionTransfer
-from head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
-from paws import Paws
+from catcam import cats as cat_assets
+from catcam.cat_face import CatFace
+from catcam.cat_mesh import CatMesh, Renderer
+from catcam.face_motion import ExpressionTransfer
+from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
+from catcam.paths import FACE_MODEL, HAND_MODEL
+from catcam.paws import Paws, PawSprite, paw_sprite, paw_style
+from catcam.picker import SIZE as PREVIEW_SIZE
+from catcam.picker import Picker, put_text
 
-HERE = Path(__file__).parent
 OUT_W, OUT_H, FPS = 1280, 720, 30
-FACE_MODEL = str(HERE / "face_landmarker.task")
-HAND_MODEL = str(HERE / "hand_landmarker.task")
+WINDOW = "Cat Cam"
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.7  # 0..1, higher = snappier; kept snappy so blinks show
 # One Euro filters: lower MIN_CUTOFF = less jitter when still, higher BETA =
-# less lag when moving fast.
+# less lag when moving fast. Expression speeds are in face widths per second.
 ROTATION_MIN_CUTOFF, ROTATION_BETA = 0.8, 3.5
-EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA = 3.0, 0.3
+EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA = 3.0, 60.0
 
 # Blendshape score range mapped to 0..1 eye closedness.
 BLINK_RANGE = (0.35, 0.7)
@@ -47,49 +49,49 @@ EXPRESSIVE = [
     "browOuterUpRight", "eyeBlinkLeft", "eyeBlinkRight", "cheekPuff",
 ]
 RELAXED_BELOW = 0.25
-# Below the chin the cat fades out (in face heights below the chin), so no neck.
-NECK_FADE = (0.03, 0.25)
+NO_FACE_HINT_AFTER = 1.0  # s without a face before the preview says so
+WEBCAM_TIMEOUT = 5.0  # s of failed webcam reads before giving up
 
 
-def load_sprite(chin_y: float, face_height: float):
-    sprite = cv2.imread(str(HERE / "cat_cutout.png"), cv2.IMREAD_UNCHANGED)
-    # Keep only the cat blob (drops faint background leftovers), soft edges.
-    mask = (sprite[..., 3] > 128).astype(np.uint8)
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
-    biggest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-    alpha = cv2.GaussianBlur((labels == biggest).astype(np.float32), (5, 5), 0)
-    start, end = (chin_y + f * face_height for f in NECK_FADE)
-    fade = np.clip((end - np.arange(sprite.shape[0])) / (end - start), 0, 1)[:, None]
-    sprite[..., 3] = (alpha * fade * 255).astype(np.uint8)
-    return sprite
+@dataclass(frozen=True)
+class Cat:
+    """Everything needed to draw one cat."""
+    name: str
+    points: np.ndarray
+    eyelids: CatFace
+    mesh: CatMesh
+    paw: PawSprite
+    sprite: np.ndarray
+    background: np.ndarray
 
 
-def background_color():
-    photo = cv2.imread(str(HERE / "cat.jpg"))
-    return photo[:20, :20].reshape(-1, 3).mean(axis=0)
+def load_cats(renderer: Renderer) -> list[Cat]:
+    names = cat_assets.available()
+    missing = cat_assets.unprepared()
+    if missing:
+        print(f"Not prepared yet (skipped): {', '.join(missing)}. "
+              "Run: uv run --group prepare python -m catcam.prepare")
+    if not names:
+        sys.exit("No cats found. Put portraits in all_cats/ and run: "
+                 "uv run --group prepare python -m catcam.prepare")
+    cats = []
+    for name in names:
+        a = cat_assets.load(name)
+        cats.append(Cat(
+            name=name,
+            points=a.points,
+            eyelids=CatFace(a.sprite, a.points[:, :2]),
+            mesh=CatMesh(renderer, a.sprite, a.points, a.background),
+            paw=paw_sprite(paw_style(a.sprite, a.points)),
+            sprite=a.sprite,
+            background=a.background,
+        ))
+    return cats
 
 
 def landmarks_px(landmarks, width, height):
     """(478, 3) pixel coords; z uses the x scale, as MediaPipe defines it."""
     return np.array([(p.x * width, p.y * height, p.z * width) for p in landmarks])
-
-
-def cat_landmarks():
-    """The cat has a human face, so the landmarker finds its features too.
-
-    Returns (478, 3) landmarks in sprite px and the cat's head rotation in the photo.
-    """
-    options = vision.FaceLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=FACE_MODEL),
-        output_facial_transformation_matrixes=True,
-    )
-    with vision.FaceLandmarker.create_from_options(options) as landmarker:
-        image = mp.Image.create_from_file(str(HERE / "cat.jpg"))
-        result = landmarker.detect(image)
-    if not result.face_landmarks:
-        sys.exit("Could not find the face in cat.jpg.")
-    points = landmarks_px(result.face_landmarks[0], image.width, image.height)
-    return points, rotation_of(result.facial_transformation_matrixes[0])
 
 
 def ramp(value, lo, hi):
@@ -106,16 +108,71 @@ def blinks(scores):
     ])
 
 
+class FaceState:
+    """Your smoothed head pose and expression, independent of the cat."""
+
+    def __init__(self):
+        self.rotation_filter = OneEuroFilter(ROTATION_MIN_CUTOFF, ROTATION_BETA)
+        self.expression_filter = OneEuroFilter(EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA)
+        self.transfer = ExpressionTransfer()
+        self.neutral_pose = None
+        self.head = np.zeros(3)  # rotation vector; 0 = facing the viewer
+        self.blink = np.zeros(2)
+        self.offsets = np.zeros((478, 3))  # in face widths
+        self.face = None  # last seen face landmarks in px
+        self.last_seen = None
+
+    def reset_neutral(self):
+        """Your next face and pose become the neutral ones."""
+        self.transfer.reset()
+        self.neutral_pose = None
+
+    def update(self, result, cam_size, dt: float, now: float):
+        if not result.face_landmarks:  # no face -> keep the last pose and expression
+            return
+        self.face = landmarks_px(result.face_landmarks[0], *cam_size)
+        self.last_seen = now
+        pose = rotation_of(result.facial_transformation_matrixes[0])
+        if self.neutral_pose is None:
+            # The way you sit at the start (e.g. looking down at the screen
+            # past the camera) is "facing the viewer" for the cat.
+            self.neutral_pose = pose
+        self.head = self.rotation_filter(to_vector(relative_rotation(pose, self.neutral_pose)), dt)
+        scores = {c.category_name: c.score for c in result.face_blendshapes[0]}
+        self.blink = self.blink + BLINK_SMOOTHING * (blinks(scores) - self.blink)
+        relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
+        self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
+
+
+def render(cat: Cat, state: FaceState, paws: Paws) -> np.ndarray:
+    sprite = cat.eyelids.render(blink=tuple(state.blink))
+    offsets = state.transfer.to_cat(state.offsets, cat.points)
+    return paws.draw(cat.mesh.render(sprite, offsets, to_matrix(state.head)), cat.paw)
+
+
+def preview(out: np.ndarray, cat: Cat, looking: bool) -> np.ndarray:
+    """Mirrored like a mirror, with hints that never reach the call."""
+    view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
+    w, h = PREVIEW_SIZE
+    bar = view[h - 34:]
+    bar[:] = (bar * 0.45).astype(np.uint8)
+    put_text(view, f"{cat.name}   -   c: change cat   n: reset neutral face   q: quit",
+             w / 2, h - 12, 0.5, (240, 240, 240))
+    if looking:
+        put_text(view, "Looking for your face...", w / 2, 36, 0.8, (255, 255, 255), 2)
+    return view
+
+
 def create_trackers():
     video = vision.RunningMode.VIDEO
     face = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=FACE_MODEL),
+        base_options=BaseOptions(model_asset_path=str(FACE_MODEL)),
         running_mode=video,
         output_face_blendshapes=True,
         output_facial_transformation_matrixes=True,
     ))
     hands = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=HAND_MODEL),
+        base_options=BaseOptions(model_asset_path=str(HAND_MODEL)),
         running_mode=video,
         num_hands=2,
     ))
@@ -145,60 +202,86 @@ def open_virtual_camera():
                  "Keep OBS closed while this runs.")
 
 
-def main():
-    cat_points, cat_rotation = cat_landmarks()
-    sprite = load_sprite(cat_points[:, 1].max(), np.ptp(cat_points[:, 1]))
-    cat_face = CatFace(sprite, cat_points[:, :2])
-    cat_mesh = CatMesh(sprite, cat_points, (OUT_W, OUT_H), background_color())
-    paws = Paws(*cat_mesh.face_on_screen(), OUT_W)
-    transfer = ExpressionTransfer(cat_points)
-    face_tracker, hand_tracker = create_trackers()
-    webcam = open_webcam()
-    vcam = open_virtual_camera()
+class Mouse:
+    """Collects the picker's mouse events from OpenCV's callback."""
 
-    rotation_filter = OneEuroFilter(ROTATION_MIN_CUTOFF, ROTATION_BETA)
-    expression_filter = OneEuroFilter(EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA)
-    # Until a face is found: cat looks straight ahead with its own expression.
-    # (The cat in the photo is turned slightly; its inverse rotation undoes that.)
-    head = to_vector(cat_rotation.T)
-    blink = np.zeros(2)
-    offsets = np.zeros_like(cat_points)
-    user_face = None
-    print(f"Streaming to '{vcam.device}'. Select it as camera in Zoom.\n"
-          "Keep a relaxed face for a second at start. Keys: q = quit, n = recalibrate neutral face.")
+    def __init__(self, picker: Picker):
+        self.picker = picker
+        self.clicked = None
+
+    def __call__(self, event, x, y, flags, param):
+        if event == cv2.EVENT_MOUSEMOVE:
+            self.picker.hover = self.picker.hit(x, y)
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.clicked = self.picker.hit(x, y)
+
+    def take_click(self) -> int | None:
+        clicked, self.clicked = self.clicked, None
+        return clicked
+
+
+def main():
+    print("Loading cats...")
+    renderer = Renderer((OUT_W, OUT_H))
+    cats = load_cats(renderer)
+    picker = Picker([(c.name, c.sprite, c.background) for c in cats])
+    face_tracker, hand_tracker = create_trackers()
+    vcam = open_virtual_camera()
+    webcam = open_webcam()
+
+    cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
+    mouse = Mouse(picker)
+    cv2.setMouseCallback(WINDOW, mouse)
+    state = FaceState()
+    paws = Paws(OUT_W)
+    current, picking, picked_once = 0, True, False
+    print(f"Streaming to '{vcam.device}'. Select it as the camera in Zoom.\n"
+          "Pick a cat in the window. Keep a relaxed face for a second at the start.")
     with vcam:
-        start = last = time.monotonic()
+        start = last = last_frame = time.monotonic()
         while True:
             ok, frame = webcam.read()
-            if not ok:
-                continue
             now = time.monotonic()
+            if not ok:
+                if now - last_frame > WEBCAM_TIMEOUT:
+                    sys.exit("The webcam stopped sending images (is another app using it?).")
+                time.sleep(0.01)
+                continue
+            last_frame = now
             dt, last = max(now - last, 1e-3), now
             cam_h, cam_w = frame.shape[:2]
             image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             timestamp = int((now - start) * 1000)
-            face = face_tracker.detect_for_video(image, timestamp)
+            state.update(face_tracker.detect_for_video(image, timestamp), (cam_w, cam_h), dt, now)
             hands = hand_tracker.detect_for_video(image, timestamp)
+            cat = cats[current]
+            paws.update(hands, state.face, (cam_w, cam_h), dt, *cat.mesh.face_on_screen())
 
-            if face.face_landmarks:  # no face -> keep the last pose and expression
-                user_face = landmarks_px(face.face_landmarks[0], cam_w, cam_h)
-                user_rotation = rotation_of(face.facial_transformation_matrixes[0])
-                head = rotation_filter(to_vector(relative_rotation(user_rotation, cat_rotation)), dt)
-                scores = {c.category_name: c.score for c in face.face_blendshapes[0]}
-                blink = blink + BLINK_SMOOTHING * (blinks(scores) - blink)
-                relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
-                offsets = expression_filter(EXPRESSION_GAIN * transfer(user_face, relaxed), dt)
-            paws.update(hands, user_face, (cam_w, cam_h), dt)
-
-            out = cat_mesh.render(cat_face.render(blink=tuple(blink)), offsets, to_matrix(head))
-            out = paws.draw(out)
+            out = render(cat, state, paws)
             vcam.send(out)
-            cv2.imshow("cat cam (q quit, n neutral)", cv2.flip(cv2.resize(out, (640, 360)), 1))
+            if picking:
+                cv2.imshow(WINDOW, picker.draw(current if picked_once else None))
+            else:
+                looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
+                cv2.imshow(WINDOW, preview(out, cat, looking))
+
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
+            if key == ord("q") or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break
-            if key == ord("n"):
-                transfer.reset()
+            choice = picker.key_choice(key)
+            if picking:
+                clicked = mouse.take_click()
+                if key == 13 and picker.hover is not None:  # Enter
+                    choice = picker.hover
+                choice = clicked if clicked is not None else choice
+                if key == 27 and picked_once:  # Esc
+                    picking = False
+            elif key == ord("c"):
+                picking = True
+            elif key == ord("n"):
+                state.reset_neutral()
+            if choice is not None:
+                current, picking, picked_once = choice, False, True
 
     webcam.release()
     cv2.destroyAllWindows()

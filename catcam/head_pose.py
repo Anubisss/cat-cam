@@ -17,9 +17,9 @@ def rotation_of(matrix: np.ndarray) -> np.ndarray:
     return _FLIP @ (u @ vt) @ _FLIP
 
 
-def relative_rotation(user: np.ndarray, cat: np.ndarray) -> np.ndarray:
-    """Rotation that turns the cat from its photo pose to the user's pose."""
-    return user @ cat.T
+def relative_rotation(current: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Rotation that turns a head from the reference pose to the current one."""
+    return current @ reference.T
 
 
 def to_vector(rotation: np.ndarray) -> np.ndarray:

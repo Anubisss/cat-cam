@@ -1,14 +1,17 @@
 """Cat paws that follow your hands.
 
-Each tracked hand becomes a white-socked paw with pink toe beans on a black
-furry arm (matching the tuxedo cat). Its position is taken relative to your
-face, so a hand next to your chin puts the paw next to the cat's chin.
+Each tracked hand becomes a socked paw with pink toe beans on a furry arm,
+coloured like the cat: the arm takes the fur of its cheeks, the sock the fur of
+its chin. Its position is taken relative to your face, so a hand next to your
+chin puts the paw next to the cat's chin.
 """
 
-import numpy as np
-import cv2
+from typing import NamedTuple
 
-from head_pose import OneEuroFilter
+import cv2
+import numpy as np
+
+from catcam.head_pose import OneEuroFilter
 
 PAW_SIZE = 1.1  # paw width relative to your palm width
 PAW_MIN_CUTOFF, PAW_BETA = 1.5, 0.02
@@ -16,16 +19,55 @@ FADE_RATE = 0.35  # how fast paws appear / disappear
 ARM_LENGTH = 14  # in paw widths
 DEFAULT_FACE_WIDTH = 0.25  # of the camera width, used until a face is seen
 
-BLACK_FUR = (38, 36, 36)
-WHITE_FUR = (232, 234, 236)
-OUTLINE = (175, 175, 180)
 BEAN = (178, 165, 240)
+OUTLINE_SHADE = 0.75  # toe outlines: the sock colour, darkened
+# Face landmarks whose fur colours the paw, and which brightness of that fur
+# (as a percentile) to use: chins sit in shadow, so the sock takes a light tone.
+CHEEKS, ARM_BRIGHTNESS = [234, 454, 93, 323], 50
+CHIN, SOCK_BRIGHTNESS = [152, 175, 199, 200, 205, 425, 36, 266], 80
+SAMPLE_RADIUS = 0.03  # in face widths
+ROUNDNESS = 0.3  # how much darker the arm and paw get toward their sides
 
 WRIST, INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP = 0, 5, 9, 13, 17
 
 
-def _paw_sprite(width: int = 220):
-    """BGRA paw on an arm pointing down; returns (sprite, anchor at paw center)."""
+class PawStyle(NamedTuple):
+    arm: tuple[int, int, int]  # BGR
+    sock: tuple[int, int, int]
+
+
+class PawSprite(NamedTuple):
+    image: np.ndarray  # BGRA, arm pointing down
+    anchor: np.ndarray  # paw centre in the image
+    width: int  # paw width in the image
+
+
+def _fur_color(sprite: np.ndarray, points: np.ndarray, radius: float, brightness: float):
+    """Colour of the fur around points, at a brightness percentile."""
+    mask = np.zeros(sprite.shape[:2], np.uint8)
+    for x, y in points:
+        cv2.circle(mask, (int(x), int(y)), max(int(radius), 1), 255, -1)
+    mask &= np.where(sprite[..., 3] > 200, 255, 0).astype(np.uint8)
+    fur = sprite[..., :3][mask > 0].astype(np.float64)
+    if not len(fur):
+        return (128, 128, 128)
+    luma = fur @ (0.114, 0.587, 0.299)  # BGR
+    lo, hi = np.percentile(luma, [max(brightness - 10, 0), min(brightness + 10, 100)])
+    band = fur[(luma >= lo) & (luma <= hi)]
+    return tuple(int(c) for c in band.mean(axis=0))
+
+
+def paw_style(sprite: np.ndarray, landmarks: np.ndarray) -> PawStyle:
+    """Paw colours sampled from the cat. landmarks: (478, 2+) sprite px."""
+    radius = SAMPLE_RADIUS * np.ptp(landmarks[:, 0])
+    return PawStyle(
+        arm=_fur_color(sprite, landmarks[CHEEKS, :2], radius, ARM_BRIGHTNESS),
+        sock=_fur_color(sprite, landmarks[CHIN, :2], radius, SOCK_BRIGHTNESS),
+    )
+
+
+def paw_sprite(style: PawStyle, width: int = 220) -> PawSprite:
+    """Draws a paw on an arm pointing down."""
     ss = 2  # draw at 2x and downscale for smooth edges
     w = width * ss
     # The arm is long enough to always run off-screen.
@@ -39,7 +81,8 @@ def _paw_sprite(width: int = 220):
         draw(alpha, 255)
 
     arm_w = int(w * 0.62)
-    blob(BLACK_FUR, lambda img, c: cv2.rectangle(
+    outline = tuple(int(c * OUTLINE_SHADE) for c in style.sock)
+    blob(style.arm, lambda img, c: cv2.rectangle(
         img, (cx - arm_w // 2, cy), (cx + arm_w // 2, canvas_h), c, -1))
 
     toes = [
@@ -56,12 +99,12 @@ def _paw_sprite(width: int = 220):
         for toe in toes:
             cv2.circle(img, toe, toe_r + grow, c, -1, cv2.LINE_AA)
 
-    blob(OUTLINE, lambda img, c: sock(img, c, grow=ss * 3))
-    sock(color, WHITE_FUR)
+    blob(outline, lambda img, c: sock(img, c, grow=ss * 3))
+    sock(color, style.sock)
     # Toe separations.
     for toe in toes:
-        cv2.circle(color, toe, toe_r, OUTLINE, ss * 2, cv2.LINE_AA)
-    sock(color, WHITE_FUR, grow=-ss * 3)
+        cv2.circle(color, toe, toe_r, outline, ss * 2, cv2.LINE_AA)
+    sock(color, style.sock, grow=-ss * 3)
 
     cv2.ellipse(color, (cx, cy + int(w * 0.06)), (int(w * 0.2), int(w * 0.15)),
                 0, 0, 360, BEAN, -1, cv2.LINE_AA)
@@ -71,22 +114,25 @@ def _paw_sprite(width: int = 220):
     # A little fur grain so it doesn't look flat.
     rng = np.random.default_rng(0)
     grain = cv2.GaussianBlur(rng.normal(0, 1, alpha.shape).astype(np.float32), (0, 0), ss * 1.5)
-    color = np.clip(color * (1 + 0.15 * grain[..., None]), 0, 255).astype(np.uint8)
+    # Rounded look: darker toward the sides of the arm.
+    side = np.abs(np.arange(canvas_w) - cx) / (arm_w / 2)
+    shade = 1 - ROUNDNESS * np.clip(side, 0, 1.3) ** 2
+    color = np.clip(color * (shade[None, :, None] + 0.15 * grain[..., None]), 0, 255).astype(np.uint8)
 
     sprite = cv2.resize(np.dstack([color, alpha]), (canvas_w // ss, canvas_h // ss),
                         interpolation=cv2.INTER_AREA)
-    return sprite, np.array([cx / ss, cy / ss]), width
+    return PawSprite(sprite, np.array([cx / ss, cy / ss]), width)
 
 
 class Paws:
-    def __init__(self, cat_face_center: np.ndarray, cat_face_width: float, out_width: int):
-        self.sprite, self.anchor, self.sprite_width = _paw_sprite()
-        self.cat_center, self.cat_width = cat_face_center, cat_face_width
+    def __init__(self, out_width: int):
         self.out_w = out_width
         self.slots = {}  # handedness -> {"filter", "params", "presence"}
 
-    def update(self, hands, user_face: np.ndarray | None, cam_size, dt: float):
-        """hands: HandLandmarkerResult; user_face: (478, 3) face landmarks in px, or None."""
+    def update(self, hands, user_face: np.ndarray | None, cam_size, dt: float,
+               cat_face_center: np.ndarray, cat_face_width: float):
+        """hands: HandLandmarkerResult; user_face: (478, 3) face landmarks in px,
+        or None; cat_face_*: where the cat's face is on screen."""
         cam_w, cam_h = cam_size
         if user_face is not None:
             face_center = user_face[:, :2].mean(axis=0)
@@ -105,8 +151,8 @@ class Paws:
             # frame (so hands stay on screen even though the cat fills it);
             # sized relative to your face, like a real paw next to the cat's.
             target = np.array([
-                *(self.cat_center + (palm - face_center) * (self.out_w / cam_w)),
-                palm_width * (self.cat_width / face_width) * PAW_SIZE,
+                *(cat_face_center + (palm - face_center) * (self.out_w / cam_w)),
+                palm_width * (cat_face_width / face_width) * PAW_SIZE,
                 *up,
             ])
             name = handedness[0].category_name
@@ -121,10 +167,10 @@ class Paws:
             if name not in seen and slot["presence"] < 0.02:
                 slot["filter"] = OneEuroFilter(PAW_MIN_CUTOFF, PAW_BETA)  # restart fresh
 
-    def draw(self, frame: np.ndarray) -> np.ndarray:
+    def draw(self, frame: np.ndarray, paw: PawSprite) -> np.ndarray:
         out = frame.copy()
         frame_h, frame_w = out.shape[:2]
-        sprite_h, sprite_w = self.sprite.shape[:2]
+        sprite_h, sprite_w = paw.image.shape[:2]
         sprite_corners = np.array([[0, 0], [sprite_w, 0], [0, sprite_h], [sprite_w, sprite_h]], float)
         for slot in self.slots.values():
             if slot["presence"] < 0.02 or "params" not in slot:
@@ -132,10 +178,10 @@ class Paws:
             x, y, size, ux, uy = slot["params"]
             norm = np.hypot(ux, uy) + 1e-6
             ux, uy = ux / norm, uy / norm
-            s = size / self.sprite_width
+            s = size / paw.width
             # Rotate the sprite's "up" (0, -1) onto the hand's up direction.
             rot = s * np.array([[-uy, -ux], [ux, -uy]])
-            m = np.hstack([rot, (np.array([x, y]) - rot @ self.anchor)[:, None]])
+            m = np.hstack([rot, (np.array([x, y]) - rot @ paw.anchor)[:, None]])
             # Only warp and blend the screen area the paw covers.
             corners = sprite_corners @ m[:, :2].T + m[:, 2]
             x0, y0 = np.clip(np.floor(corners.min(axis=0)).astype(int), 0, (frame_w, frame_h))
@@ -143,11 +189,11 @@ class Paws:
             if x1 <= x0 or y1 <= y0:
                 continue
             m[:, 2] -= (x0, y0)
-            paw = cv2.warpAffine(
-                self.sprite, m, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
+            warped = cv2.warpAffine(
+                paw.image, m, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
                 borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0),
             )
-            a = paw[..., 3:4].astype(np.float32) / 255 * slot["presence"]
+            a = warped[..., 3:4].astype(np.float32) / 255 * slot["presence"]
             roi = out[y0:y1, x0:x1]
-            out[y0:y1, x0:x1] = (paw[..., :3] * a + roi * (1 - a)).astype(np.uint8)
+            out[y0:y1, x0:x1] = (warped[..., :3] * a + roi * (1 - a)).astype(np.uint8)
         return out

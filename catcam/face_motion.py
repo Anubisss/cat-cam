@@ -2,8 +2,8 @@
 
 Your landmarks are aligned to your own neutral face (removing head position,
 rotation and distance), so what is left is pure expression: how far each point
-moved. Those movements are mapped into the cat's frame and added to the cat's
-matching landmarks.
+moved, in face widths. Those movements are then mapped into a cat's frame and
+added to the cat's matching landmarks.
 """
 
 import numpy as np
@@ -30,27 +30,26 @@ def similarity(src: np.ndarray, dst: np.ndarray):
 
 
 class ExpressionTransfer:
-    def __init__(self, cat_points: np.ndarray):
-        self.cat = cat_points
-        self.neutral = None
-        self.to_cat = None
+    def __init__(self):
+        self.neutral = None  # your neutral face, (478, 3) px
 
     def reset(self):
         """Take the next face as the new neutral face."""
         self.neutral = None
 
     def __call__(self, user: np.ndarray, relaxed: bool) -> np.ndarray:
-        """user: (478, 3) landmarks in px. Returns (478, 3) offsets in cat px."""
+        """user: (478, 3) landmarks in px. Returns (478, 3) offsets in face widths."""
         if self.neutral is None:
-            self._set_neutral(user)
+            self.neutral = user
         s, r, t = similarity(user[STABLE], self.neutral[STABLE])
         aligned = s * user @ r.T + t
         if relaxed:
-            self._set_neutral(self.neutral + NEUTRAL_RATE * (aligned - self.neutral))
-        scale, rotation = self.to_cat
-        return scale * (aligned - self.neutral) @ rotation.T
+            self.neutral = self.neutral + NEUTRAL_RATE * (aligned - self.neutral)
+        return (aligned - self.neutral) / np.ptp(self.neutral[:, 0])
 
-    def _set_neutral(self, points: np.ndarray):
-        self.neutral = points
-        s, r, _ = similarity(points[STABLE], self.cat[STABLE])
-        self.to_cat = (s, r)
+    def to_cat(self, offsets: np.ndarray, cat_points: np.ndarray) -> np.ndarray:
+        """Offsets from __call__ as (478, 3) offsets in the cat's px."""
+        if self.neutral is None:
+            return np.zeros_like(cat_points)
+        s, r, _ = similarity(self.neutral[STABLE], cat_points[STABLE])
+        return s * np.ptp(self.neutral[:, 0]) * offsets @ r.T
