@@ -81,7 +81,7 @@ at the viewer". If the cat looks grumpy or turned while you are relaxed, press
 `n`.
 
 Raise your hands into the camera's view for paws. Turn a hand around to
-show the other side of the paw.
+show the other side of the paw, and make a fist to curl its toes in.
 
 ### Keys (in the Cat Cam window)
 

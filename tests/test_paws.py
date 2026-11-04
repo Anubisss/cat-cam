@@ -8,6 +8,7 @@ from catcam.paws import (
     CHIN,
     PHOTO_ARM_LENGTH,
     Paws,
+    closedness,
     palm_facing,
     palm_toward,
     paw_set,
@@ -154,3 +155,32 @@ def test_palms_show_the_sole_and_backs_the_top():
         drawn = paws.draw(frame, paws_set)
         painted = drawn[drawn.any(axis=2)]
         assert painted[:, channel].mean() > 200, palm
+
+
+def _fingers(reach):
+    """Hand points (px), fingers up, tips at `reach` times the knuckles' distance from the wrist."""
+    pts = np.zeros((21, 2))
+    pts[0] = (0, 100)
+    for tip, mcp, x in ((8, 5, -30), (12, 9, -10), (16, 13, 10), (20, 17, 30)):
+        pts[mcp] = (x, 0)
+        pts[tip] = pts[0] + reach * (pts[mcp] - pts[0])
+    return pts
+
+
+def test_fist_or_open_hand():
+    assert closedness(_fingers(2.0)) == 0
+    assert closedness(_fingers(0.8)) == 1
+    assert 0 < closedness(_fingers(1.25)) < 1
+
+
+def test_closed_paws_curl_their_toes_in():
+    paw = photo_paw(_photo_paw((0, 0, 255)))
+    tops = []
+    for closed in (0.0, 1.0):
+        paws = Paws(out_width=400)
+        paws.slots = {"Right": {"presence": 1.0, "params": np.array([200, 150, 120, 0, -1, -1, closed])}}
+        drawn = paws.draw(np.zeros((400, 400, 3), np.uint8), paw)
+        rows = np.flatnonzero(drawn.any(axis=(1, 2)))
+        tops.append(rows.min())
+        assert rows.max() == 399  # the arm is unchanged
+    assert tops[1] > tops[0] + 10  # the toes are shorter
