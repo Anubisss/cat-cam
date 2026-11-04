@@ -11,7 +11,7 @@ def _cats(n):
     return [(f"Cat{i}", sprite, np.array([90, 90, 90], np.uint8)) for i in range(n)]
 
 
-@pytest.mark.parametrize("n", range(1, 10))
+@pytest.mark.parametrize("n", [*range(1, 10), 16, 24, 40])
 def test_cards_fit_and_do_not_overlap(n):
     picker = Picker(_cats(n))
     width, height = SIZE

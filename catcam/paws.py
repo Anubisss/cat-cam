@@ -140,7 +140,7 @@ class Paws:
         else:  # face never seen yet: assume a typical webcam framing
             face_center = np.array([cam_w / 2, cam_h * 0.4])
             face_width = cam_w * DEFAULT_FACE_WIDTH
-        seen = set()
+        detections = []
         for landmarks, handedness in zip(hands.hand_landmarks, hands.handedness):
             pts = np.array([(p.x * cam_w, p.y * cam_h) for p in landmarks])
             up = pts[MIDDLE_MCP] - pts[WRIST]
@@ -155,7 +155,9 @@ class Paws:
                 palm_width * (cat_face_width / face_width) * PAW_SIZE,
                 *up,
             ])
-            name = handedness[0].category_name
+            detections.append((handedness[0].category_name, target))
+        seen = set()
+        for name, target in self._label(detections):
             slot = self.slots.setdefault(
                 name, {"filter": OneEuroFilter(PAW_MIN_CUTOFF, PAW_BETA), "presence": 0.0}
             )
@@ -166,6 +168,21 @@ class Paws:
             slot["presence"] += FADE_RATE * (present - slot["presence"])
             if name not in seen and slot["presence"] < 0.02:
                 slot["filter"] = OneEuroFilter(PAW_MIN_CUTOFF, PAW_BETA)  # restart fresh
+
+    def _label(self, detections):
+        """Gives each hand its own slot. MediaPipe sometimes calls both hands
+        "Left" (e.g. crossed); then each goes to the slot nearest to it."""
+        if len(detections) != 2 or detections[0][0] != detections[1][0]:
+            return detections
+        (_, a), (_, b) = detections
+
+        def distance(name, target):
+            last = self.slots.get(name, {}).get("params")
+            return 0.0 if last is None else float(np.linalg.norm(last[:2] - target[:2]))
+
+        straight = distance("Left", a) + distance("Right", b)
+        swapped = distance("Right", a) + distance("Left", b)
+        return [("Left", a), ("Right", b)] if straight <= swapped else [("Right", a), ("Left", b)]
 
     def draw(self, frame: np.ndarray, paw: PawSprite) -> np.ndarray:
         out = frame.copy()

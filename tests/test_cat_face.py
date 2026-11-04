@@ -23,3 +23,11 @@ def test_blink_only_touches_the_eyes(real_cats):
         for upper, lower in EYES:
             mid = ((cat.points[upper[4], :2] + cat.points[lower[4], :2]) / 2).astype(int)
             assert (closed[mid[1], mid[0]] != cat.sprite[mid[1], mid[0]]).any(), cat.name
+
+
+def test_eye_outside_the_sprite_is_ignored(real_cats):
+    cat = real_cats[0]
+    points = cat.points[:, :2].copy()
+    points[[i for contour in EYES[0] for i in contour], 0] = -50
+    face = CatFace(cat.sprite, points)
+    assert face.render((1.0, 1.0)).shape == cat.sprite.shape

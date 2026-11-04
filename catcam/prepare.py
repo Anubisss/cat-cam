@@ -29,17 +29,22 @@ BORDER = 20  # px of portrait border sampled for the background colour
 SOLID_INSIDE = 0.015  # of the image size: deeper inside the cat than this is fully opaque
 
 
-def cut_out(bgr: np.ndarray) -> np.ndarray:
-    """BGRA cat with a clean, slightly feathered alpha."""
-    from rembg import new_session, remove  # only needed here, not to run the filter
+class CutoutError(RuntimeError):
+    pass
 
-    session = new_session("isnet-general-use")
+
+def cut_out(bgr: np.ndarray, session) -> np.ndarray:
+    """BGRA cat with a clean, slightly feathered alpha."""
+    from rembg import remove  # only needed here, not to run the filter
+
     rgba = remove(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), session=session)
     soft = rgba[..., 3].astype(np.float32) / 255
     # Keep only the cat itself (drops faint background leftovers), with its
     # silhouette filled in.
     mask = (rgba[..., 3] > 20).astype(np.uint8)
-    _, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    if count < 2:
+        raise CutoutError("found no cat to cut out")
     biggest = (labels == 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])).astype(np.uint8)
     contours, _ = cv2.findContours(biggest, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     filled = cv2.drawContours(np.zeros_like(biggest), contours, -1, 1, -1)
@@ -90,23 +95,36 @@ def main():
         return
 
     print("Cutting out cats...")
-    images, cutouts = {}, {}
+    from rembg import new_session
+
+    session = new_session("isnet-general-use")
+    images, cutouts, failed = {}, {}, []
     for name, path in portraits.items():
-        images[name] = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image is None:
+            print(f"  {name}: cannot read {path}, skipped.")
+            failed.append(name)
+            continue
         cached = ASSETS / name / "cutout.png"
-        if name in todo or not cached.exists():
-            cutouts[name] = cut_out(images[name])
-        else:  # only its outline is needed, to use it as a primer
-            small = cv2.imread(str(cached), cv2.IMREAD_UNCHANGED)
-            h, w = images[name].shape[:2]
-            cutouts[name] = np.dstack([images[name], cv2.resize(small[..., 3], (w, h))])
-    subjects = {n: Portrait(images[n], head_bbox(cutouts[n][..., 3])) for n in portraits}
-    primers = [n for n in portraits if detects_directly(subjects[n])]
+        try:
+            if name in todo or not cached.exists():
+                cutouts[name] = cut_out(image, session)
+            else:  # only its outline is needed, to use it as a primer
+                small = cv2.imread(str(cached), cv2.IMREAD_UNCHANGED)
+                h, w = image.shape[:2]
+                cutouts[name] = np.dstack([image, cv2.resize(small[..., 3], (w, h))])
+        except CutoutError as e:
+            print(f"  {name}: {e}, skipped.")
+            failed.append(name)
+            continue
+        images[name] = image
+    todo = [n for n in todo if n in images]
+    subjects = {n: Portrait(images[n], head_bbox(cutouts[n][..., 3])) for n in images}
+    primers = [n for n in subjects if detects_directly(subjects[n])]
     if not primers:
         sys.exit("The face detector finds none of the portraits, so there is nothing to start from.")
     mirror = np.load(FACE_MIRROR)
 
-    failed = []
     for name in todo:
         print(f"Finding {name}'s face...")
         # Other cats make better primers (they test the tracking for real);

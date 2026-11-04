@@ -59,3 +59,15 @@ def test_paws_follow_hands_and_fade_out():
     for _ in range(40):
         paws.update(nothing, None, (1280, 720), 1 / 30, np.array([640.0, 300.0]), 300.0)
     assert not paws.draw(frame, paw).any()
+
+
+def test_two_hands_with_the_same_label_get_their_own_paws():
+    paw = paw_sprite(paw_style(*_cat()), width=100)
+    paws = Paws(out_width=1280)
+    label = [SimpleNamespace(category_name="Left")]
+    hands = SimpleNamespace(hand_landmarks=[_hand(0.2, 0.5), _hand(0.8, 0.5)], handedness=[label, label])
+    for _ in range(20):
+        paws.update(hands, None, (1280, 720), 1 / 30, np.array([640.0, 300.0]), 300.0)
+    drawn = paws.draw(np.zeros((720, 1280, 3), np.uint8), paw)
+    columns = np.argwhere(drawn.any(axis=2))[:, 1]
+    assert (columns < 640).any() and (columns > 640).any()

@@ -50,6 +50,8 @@ class CatFace:
         h, w = self.sprite.shape[:2]
         x0 = max(int(np.floor(upper[:, 0].min())), 0)
         x1 = min(int(np.ceil(upper[:, 0].max())) + 1, w)
+        if x1 <= x0:  # eye outside the sprite
+            return
         xs = np.arange(x0, x1, dtype=np.float32)
         lo = _sample(lower, xs)
         up = _sample(upper, xs)
@@ -60,7 +62,7 @@ class CatFace:
         top = up - skin
         y0 = max(int(np.floor(top.min())), 0)
         y1 = min(int(np.ceil(edge.max())) + 1, h)
-        if x1 <= x0 or y1 <= y0:
+        if y1 <= y0:
             return
         y = np.arange(y0, y1, dtype=np.float32)[:, None]
         inside = (y >= top) & (y <= edge)

@@ -53,6 +53,7 @@ EXPRESSIVE = [
 RELAXED_BELOW = 0.25
 NO_FACE_HINT_AFTER = 1.0  # s without a face before the preview says so
 WEBCAM_TIMEOUT = 5.0  # s of failed webcam reads before giving up
+FIRST_FRAME_TIMEOUT = 60.0
 ENTER, ESC = 13, 27
 
 
@@ -191,6 +192,7 @@ def open_webcam(index: int):
             webcam.set(cv2.CAP_PROP_FRAME_WIDTH, OUT_W)
             webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, OUT_H)
             return webcam
+        webcam.release()
         time.sleep(1)
     sys.exit(f"Cannot open webcam {index}. Grant camera access to your terminal in "
              "System Settings > Privacy & Security > Camera, or pick another one with --camera.")
@@ -258,24 +260,28 @@ class Controls:
                 choice = clicked
             if key == ESC and self.picked_once:
                 self.picking = False
-        elif key == ord("c"):
-            self.picking = True
-        elif key == ord("n"):
-            state.reset_neutral()
+        else:
+            self.mouse.take_click()  # clicks on the preview don't count later
+            if key == ord("c"):
+                self.picking = True
+                self.picker.hover = None
+            elif key == ord("n"):
+                state.reset_neutral()
         if choice is not None:
             self.current, self.picking, self.picked_once = choice, False, True
 
 
 def frames(webcam):
     """Yields (frame, time) from the webcam; exits if it stops sending."""
-    last_frame = time.monotonic()
+    # The first frame can take long: macOS may still be asking for permission.
+    last_frame, timeout = time.monotonic(), FIRST_FRAME_TIMEOUT
     while True:
         ok, frame = webcam.read()
         now = time.monotonic()
         if ok:
-            last_frame = now
+            last_frame, timeout = now, WEBCAM_TIMEOUT
             yield frame, now
-        elif now - last_frame > WEBCAM_TIMEOUT:
+        elif now - last_frame > timeout:
             sys.exit("The webcam stopped sending images (is another app using it?).")
         else:
             time.sleep(0.01)

@@ -104,3 +104,14 @@ def test_window_closed_when_opencv_says_it_is_gone(monkeypatch):
     assert window_closed()
     monkeypatch.setattr(cv2, "getWindowProperty", lambda *a: 1.0)
     assert not window_closed()
+
+
+def test_a_click_during_the_call_does_not_pick_later():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    x, y, w, h = controls.picker.cards[2]
+    controls.mouse(cv2.EVENT_LBUTTONUP, x + 1, y + 1, 0, None)  # e.g. focusing the window
+    controls.handle(-1 & 0xFF, state)
+    controls.handle(ord("c"), state)
+    controls.handle(-1 & 0xFF, state)
+    assert controls.picking and controls.current == 0

@@ -70,7 +70,8 @@ class Picker:
         """cats: (name, BGRA sprite, BGR background) per cat."""
         self.names = [name for name, _, _ in cats]
         width, height = SIZE
-        columns = min(len(cats), COLUMNS)
+        # More columns for many cats, so the cards keep room for the cat.
+        columns = min(len(cats), max(COLUMNS, math.ceil(math.sqrt(len(cats) * 1.5))))
         rows = math.ceil(len(cats) / columns)
         card_w = (width - 2 * MARGIN - (columns - 1) * GAP) // columns
         card_h = (height - HEADER - FOOTER - (rows - 1) * GAP) // rows
