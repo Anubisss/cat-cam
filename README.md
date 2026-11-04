@@ -58,6 +58,10 @@ under *System Settings → Privacy & Security → Camera* and run again.
 
 A window opens with the cat picker. Click a cat, or press its number.
 
+macOS may also ask to let your terminal use *Accessibility* / *Input
+Monitoring*. Allow it: a few keyboard shortcuts work even while Zoom is in
+front. Restart Cat Cam after allowing it.
+
 In Zoom, go to *Settings → Video → Camera* and choose **OBS Virtual Camera**.
 Do the same in any other app (Meet, Teams, FaceTime, ...). If the camera is
 not listed, restart Zoom while Cat Cam is running.

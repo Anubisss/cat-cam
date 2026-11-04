@@ -8,3 +8,4 @@ ASSETS = ROOT / "assets" / "cats"  # prepared by `python -m catcam.prepare`
 FACE_MODEL = ROOT / "models" / "face_landmarker.task"
 HAND_MODEL = ROOT / "models" / "hand_landmarker.task"
 FACE_MIRROR = Path(__file__).resolve().parent / "data" / "face_mirror.npy"
+FX_FILE = Path(__file__).resolve().parent / "data" / "fx.bin"  # optional, see catcam.fx

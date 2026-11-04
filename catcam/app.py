@@ -26,6 +26,8 @@ from catcam import cats as cat_assets
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.face_motion import ExpressionTransfer
+from catcam.fx import Effects
+from catcam.fx import load as load_effects
 from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
 from catcam.paths import FACE_MODEL, HAND_MODEL
 from catcam.paws import Paws, PawSprite, paw_sprite, paw_style
@@ -305,7 +307,7 @@ def frames(webcam):
             time.sleep(0.01)
 
 
-def stream(cats: list[Cat], controls: Controls, trackers, vcam, webcam):
+def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam, webcam):
     face_tracker, hand_tracker = trackers
     state, paws = FaceState(), Paws(OUT_W)
     start = last = time.monotonic()
@@ -319,7 +321,8 @@ def stream(cats: list[Cat], controls: Controls, trackers, vcam, webcam):
         cat = cats[controls.current]
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
 
-        out = render(cat, state, paws)
+        special = effects.update(now, cat.name)
+        out = special if special is not None else render(cat, state, paws)
         vcam.send(out)
         if controls.picking:
             cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None))
@@ -341,6 +344,8 @@ def main(argv=None):
     vcam = open_virtual_camera()
     webcam = open_webcam(args.camera)
 
+    effects = Effects(load_effects(), (OUT_W, OUT_H))
+    effects.start()
     cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
     mouse = Mouse(picker)
     cv2.setMouseCallback(WINDOW, mouse)
@@ -348,10 +353,11 @@ def main(argv=None):
           "Pick a cat in the window. Keep a relaxed face for a second at the start.")
     try:
         with vcam:
-            stream(cats, Controls(picker, mouse), trackers, vcam, webcam)
+            stream(cats, Controls(picker, mouse), effects, trackers, vcam, webcam)
     except KeyboardInterrupt:
         pass
     finally:
+        effects.stop()
         webcam.release()
         cv2.destroyAllWindows()
 
