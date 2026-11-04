@@ -26,7 +26,7 @@ from catcam import cats as cat_assets
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.face_motion import ExpressionTransfer
-from catcam.fx import Effects
+from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
 from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
 from catcam.paths import FACE_MODEL, HAND_MODEL
@@ -174,7 +174,7 @@ def render(cat: Cat, state: FaceState, paws: Paws) -> np.ndarray:
     return paws.draw(cat.mesh.render(sprite, offsets, to_matrix(state.head)), cat.paw)
 
 
-def preview(out: np.ndarray, cat: Cat, looking: bool) -> np.ndarray:
+def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None) -> np.ndarray:
     """Mirrored like a mirror, with hints that never reach the call."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
     w, h = PREVIEW_SIZE
@@ -184,6 +184,11 @@ def preview(out: np.ndarray, cat: Cat, looking: bool) -> np.ndarray:
              w / 2, h - 12, 0.5, (240, 240, 240))
     if looking:
         put_text(view, "Looking for your face...", w / 2, 36, 0.8, (255, 255, 255), 2)
+    if notice:
+        box = view[h // 2 - 50:h // 2 + 22 * len(notice) - 10]
+        box[:] = (box * 0.3).astype(np.uint8)
+        for i, line in enumerate(notice):
+            put_text(view, line, w / 2, h // 2 - 18 + 30 * i, 0.6, (255, 255, 255), 1)
     return view
 
 
@@ -311,6 +316,10 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
     face_tracker, hand_tracker = trackers
     state, paws = FaceState(), Paws(OUT_W)
     start = last = time.monotonic()
+    notice_until = 0.0
+    app = terminal_name()
+    notice = [f"Allow {app} under Input Monitoring (opened in System Settings),",
+              f"then quit and reopen {app} and start Cat Cam again."]
     for frame, now in frames(webcam):
         dt, last = max(now - last, 1e-3), now
         cam_size = (frame.shape[1], frame.shape[0])
@@ -328,8 +337,11 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
             cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None))
         else:
             looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
-            cv2.imshow(WINDOW, preview(out, cat, looking))
-        controls.handle(cv2.waitKey(1) & 0xFF, state)
+            cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None))
+        key = cv2.waitKey(1) & 0xFF
+        if effects.needs_permission(key, now):
+            notice_until = now + 10
+        controls.handle(key, state)
         if controls.quit or window_closed():
             return
 

@@ -130,3 +130,16 @@ def test_mac_key_events_reach_the_effects():
         kind = Quartz.kCGEventKeyDown if down else Quartz.kCGEventKeyUp
         assert keys._event(None, kind, event, None) is event  # listen-only: passed on unchanged
     assert seen == [("down", "k"), ("up", "k")]
+
+
+def test_shortcut_without_keyboard_access_opens_the_settings(effects, monkeypatch):
+    opened = []
+    monkeypatch.setattr(fx.subprocess, "Popen", lambda args: opened.append(args))
+    monkeypatch.setattr(fx.sys, "platform", "darwin")
+    assert not effects.needs_permission(ord("a"), 100.0)  # not a shortcut
+    assert not effects.needs_permission(255, 100.0)  # no key
+    assert effects.needs_permission(ord("K"), 100.0)
+    assert effects.needs_permission(ord("p"), 101.0)  # still says so, but doesn't reopen
+    assert opened == [["open", fx.INPUT_MONITORING]]
+    effects.listening = True
+    assert not effects.needs_permission(ord("k"), 200.0)

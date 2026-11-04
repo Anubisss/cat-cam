@@ -14,6 +14,8 @@ optional <Name>.mp3 (or .wav) sound:
 import argparse
 import io
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -115,11 +117,23 @@ def full_frame(picture: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return frame
 
 
-PERMISSION_HINT = (
-    "Shortcuts need keyboard access while another app is in front:\n"
-    "  System Settings > Privacy & Security > Input Monitoring > turn on your terminal app\n"
-    "  (Terminal, iTerm, Warp, ...), then quit and reopen the terminal and run Cat Cam again."
-)
+# macOS only lets an app see keys typed into other apps with Input Monitoring,
+# granted to the terminal app Cat Cam runs in.
+INPUT_MONITORING = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+TERMINALS = {"WarpTerminal": "Warp", "Apple_Terminal": "Terminal", "iTerm.app": "iTerm",
+             "vscode": "Visual Studio Code", "ghostty": "Ghostty"}
+SETTINGS_EVERY = 10.0  # s between opening System Settings again
+
+
+def terminal_name() -> str:
+    return TERMINALS.get(os.environ.get("TERM_PROGRAM", ""), "your terminal app")
+
+
+def permission_hint() -> str:
+    app = terminal_name()
+    return (f"Shortcuts need keyboard access while another app is in front:\n"
+            f"  System Settings > Privacy & Security > Input Monitoring > turn on {app},\n"
+            f"  then quit and reopen {app} and run Cat Cam again.")
 
 
 class MacKeys:
@@ -187,14 +201,17 @@ class Effects:
         self.lock = threading.Lock()
         self.playing = None  # key whose sound is playing
         self.sound_ok = True
+        self.listening = False  # hears keys typed into other apps
+        self.settings_opened = -SETTINGS_EVERY
 
     def start(self):
         """Listen to the keyboard globally (only if there are effects)."""
         if not self.effects:
             return
         if sys.platform == "darwin":
-            if not MacKeys(self.press, self.release, self.release_all).start():
-                print(PERMISSION_HINT)
+            self.listening = MacKeys(self.press, self.release, self.release_all).start()
+            if not self.listening:
+                print(permission_hint())
             return
         from pynput import keyboard
 
@@ -203,6 +220,17 @@ class Effects:
 
         keyboard.Listener(on_press=lambda k: self.press(char(k)),
                           on_release=lambda k: self.release(char(k)), daemon=True).start()
+        self.listening = True
+
+    def needs_permission(self, window_key: int, now: float) -> bool:
+        """A shortcut key pressed in the Cat Cam window while keys can't be heard:
+        opens the Input Monitoring settings (now and then) and returns True."""
+        if self.listening or not 0 < window_key < 255 or chr(window_key).lower() not in self.effects:
+            return False
+        if sys.platform == "darwin" and now - self.settings_opened > SETTINGS_EVERY:
+            self.settings_opened = now
+            subprocess.Popen(["open", INPUT_MONITORING])
+        return True
 
     def press(self, char: str | None):
         char = char.lower() if char else None
