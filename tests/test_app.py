@@ -1,7 +1,8 @@
+import cv2
 import numpy as np
 import pytest
 
-from catcam.app import BLINK_RANGE, Mouse, blinks, preview, ramp
+from catcam.app import BLINK_RANGE, ENTER, ESC, Controls, Mouse, blinks, preview, ramp, window_closed
 from catcam.picker import SIZE, Picker
 
 
@@ -38,3 +39,68 @@ def test_preview_is_mirrored_and_sized(real_cats):
     view = preview(out, SimpleNamespace(name="Test"), looking=False)
     assert view.shape == (SIZE[1], SIZE[0], 3)
     assert view[100, -10].min() > 200 and view[100, 10].max() < 50  # ...shows on the right
+
+
+def _controls(n=3):
+    sprite = np.full((20, 20, 4), 255, np.uint8)
+    picker = Picker([(f"C{i}", sprite, np.zeros(3, np.uint8)) for i in range(n)])
+    return Controls(picker, Mouse(picker))
+
+
+class _State:
+    resets = 0
+
+    def reset_neutral(self):
+        self.resets += 1
+
+
+def test_controls_start_in_the_picker_and_pick_by_number():
+    controls, state = _controls(), _State()
+    assert controls.picking
+    controls.handle(ESC, state)  # nothing picked yet: Esc does not leave
+    assert controls.picking
+    controls.handle(ord("2"), state)
+    assert not controls.picking and controls.current == 1
+
+
+def test_controls_change_cat_and_go_back():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    controls.handle(ord("c"), state)
+    assert controls.picking
+    controls.handle(ESC, state)
+    assert not controls.picking and controls.current == 0
+    controls.handle(ord("3"), state)  # number keys work in the call too
+    assert controls.current == 2
+
+
+def test_controls_click_and_enter():
+    controls, state = _controls(), _State()
+    x, y, w, h = controls.picker.cards[2]
+    controls.mouse(cv2.EVENT_MOUSEMOVE, x + 1, y + 1, 0, None)
+    controls.handle(ENTER, state)
+    assert controls.current == 2
+    controls.handle(ord("c"), state)
+    x, y, w, h = controls.picker.cards[1]
+    controls.mouse(cv2.EVENT_LBUTTONUP, x + 1, y + 1, 0, None)
+    controls.handle(-1 & 0xFF, state)
+    assert controls.current == 1 and not controls.picking
+
+
+def test_controls_neutral_and_quit():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    controls.handle(ord("n"), state)
+    assert state.resets == 1
+    controls.handle(ord("q"), state)
+    assert controls.quit
+
+
+def test_window_closed_when_opencv_says_it_is_gone(monkeypatch):
+    def gone(*args):
+        raise cv2.error("NULL window")
+
+    monkeypatch.setattr(cv2, "getWindowProperty", gone)
+    assert window_closed()
+    monkeypatch.setattr(cv2, "getWindowProperty", lambda *a: 1.0)
+    assert not window_closed()

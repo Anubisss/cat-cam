@@ -6,10 +6,12 @@ paws. Only the rendered cat goes out to the virtual camera; no webcam pixels
 are ever sent, so your face is never visible.
 
 Run:  uv run cat-cam      then pick "OBS Virtual Camera" in Zoom.
+      uv run cat-cam --camera 1   to use another webcam.
 Keys in the preview window: c = change cat, n = "this is my neutral face"
 (recalibrate), q = quit.
 """
 
+import argparse
 import sys
 import time
 from dataclasses import dataclass
@@ -51,6 +53,7 @@ EXPRESSIVE = [
 RELAXED_BELOW = 0.25
 NO_FACE_HINT_AFTER = 1.0  # s without a face before the preview says so
 WEBCAM_TIMEOUT = 5.0  # s of failed webcam reads before giving up
+ENTER, ESC = 13, 27
 
 
 @dataclass(frozen=True)
@@ -179,18 +182,18 @@ def create_trackers():
     return face, hands
 
 
-def open_webcam():
+def open_webcam(index: int):
     # macOS asks for camera permission asynchronously; keep retrying while the
     # permission dialog is open.
     for _ in range(30):
-        webcam = cv2.VideoCapture(0)
+        webcam = cv2.VideoCapture(index)
         if webcam.isOpened():
             webcam.set(cv2.CAP_PROP_FRAME_WIDTH, OUT_W)
             webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, OUT_H)
             return webcam
         time.sleep(1)
-    sys.exit("Cannot open webcam. Grant camera access to your terminal in "
-             "System Settings > Privacy & Security > Camera.")
+    sys.exit(f"Cannot open webcam {index}. Grant camera access to your terminal in "
+             "System Settings > Privacy & Security > Camera, or pick another one with --camera.")
 
 
 def open_virtual_camera():
@@ -200,6 +203,13 @@ def open_virtual_camera():
         sys.exit(f"{e}\n\nOne-time setup: open OBS, click 'Start Virtual Camera', "
                  "approve the system extension, click 'Stop Virtual Camera', quit OBS. "
                  "Keep OBS closed while this runs.")
+
+
+def window_closed() -> bool:
+    try:
+        return cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1
+    except cv2.error:  # macOS raises once the window is gone
+        return True
 
 
 class Mouse:
@@ -220,71 +230,106 @@ class Mouse:
         return clicked
 
 
-def main():
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Cat face filter for Zoom.")
+    parser.add_argument("--camera", type=int, default=0, metavar="N",
+                        help="webcam to use (default 0; try 1 if the wrong camera opens)")
+    return parser.parse_args(argv)
+
+
+class Controls:
+    """Which cat is streamed and whether the picker is open, driven by keys and clicks."""
+
+    def __init__(self, picker: Picker, mouse: Mouse):
+        self.picker, self.mouse = picker, mouse
+        self.current, self.picking, self.picked_once = 0, True, False
+        self.quit = False
+
+    def handle(self, key: int, state: FaceState):
+        if key == ord("q"):
+            self.quit = True
+            return
+        choice = self.picker.key_choice(key)
+        if self.picking:
+            if key == ENTER and self.picker.hover is not None:
+                choice = self.picker.hover
+            clicked = self.mouse.take_click()
+            if clicked is not None:
+                choice = clicked
+            if key == ESC and self.picked_once:
+                self.picking = False
+        elif key == ord("c"):
+            self.picking = True
+        elif key == ord("n"):
+            state.reset_neutral()
+        if choice is not None:
+            self.current, self.picking, self.picked_once = choice, False, True
+
+
+def frames(webcam):
+    """Yields (frame, time) from the webcam; exits if it stops sending."""
+    last_frame = time.monotonic()
+    while True:
+        ok, frame = webcam.read()
+        now = time.monotonic()
+        if ok:
+            last_frame = now
+            yield frame, now
+        elif now - last_frame > WEBCAM_TIMEOUT:
+            sys.exit("The webcam stopped sending images (is another app using it?).")
+        else:
+            time.sleep(0.01)
+
+
+def stream(cats: list[Cat], controls: Controls, trackers, vcam, webcam):
+    face_tracker, hand_tracker = trackers
+    state, paws = FaceState(), Paws(OUT_W)
+    start = last = time.monotonic()
+    for frame, now in frames(webcam):
+        dt, last = max(now - last, 1e-3), now
+        cam_size = (frame.shape[1], frame.shape[0])
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        timestamp = int((now - start) * 1000)
+        state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now)
+        hands = hand_tracker.detect_for_video(image, timestamp)
+        cat = cats[controls.current]
+        paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
+
+        out = render(cat, state, paws)
+        vcam.send(out)
+        if controls.picking:
+            cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None))
+        else:
+            looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
+            cv2.imshow(WINDOW, preview(out, cat, looking))
+        controls.handle(cv2.waitKey(1) & 0xFF, state)
+        if controls.quit or window_closed():
+            return
+
+
+def main(argv=None):
+    args = parse_args(argv)
     print("Loading cats...")
     renderer = Renderer((OUT_W, OUT_H))
     cats = load_cats(renderer)
     picker = Picker([(c.name, c.sprite, c.background) for c in cats])
-    face_tracker, hand_tracker = create_trackers()
+    trackers = create_trackers()
     vcam = open_virtual_camera()
-    webcam = open_webcam()
+    webcam = open_webcam(args.camera)
 
     cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
     mouse = Mouse(picker)
     cv2.setMouseCallback(WINDOW, mouse)
-    state = FaceState()
-    paws = Paws(OUT_W)
-    current, picking, picked_once = 0, True, False
     print(f"Streaming to '{vcam.device}'. Select it as the camera in Zoom.\n"
           "Pick a cat in the window. Keep a relaxed face for a second at the start.")
-    with vcam:
-        start = last = last_frame = time.monotonic()
-        while True:
-            ok, frame = webcam.read()
-            now = time.monotonic()
-            if not ok:
-                if now - last_frame > WEBCAM_TIMEOUT:
-                    sys.exit("The webcam stopped sending images (is another app using it?).")
-                time.sleep(0.01)
-                continue
-            last_frame = now
-            dt, last = max(now - last, 1e-3), now
-            cam_h, cam_w = frame.shape[:2]
-            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            timestamp = int((now - start) * 1000)
-            state.update(face_tracker.detect_for_video(image, timestamp), (cam_w, cam_h), dt, now)
-            hands = hand_tracker.detect_for_video(image, timestamp)
-            cat = cats[current]
-            paws.update(hands, state.face, (cam_w, cam_h), dt, *cat.mesh.face_on_screen())
-
-            out = render(cat, state, paws)
-            vcam.send(out)
-            if picking:
-                cv2.imshow(WINDOW, picker.draw(current if picked_once else None))
-            else:
-                looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
-                cv2.imshow(WINDOW, preview(out, cat, looking))
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
-                break
-            choice = picker.key_choice(key)
-            if picking:
-                clicked = mouse.take_click()
-                if key == 13 and picker.hover is not None:  # Enter
-                    choice = picker.hover
-                choice = clicked if clicked is not None else choice
-                if key == 27 and picked_once:  # Esc
-                    picking = False
-            elif key == ord("c"):
-                picking = True
-            elif key == ord("n"):
-                state.reset_neutral()
-            if choice is not None:
-                current, picking, picked_once = choice, False, True
-
-    webcam.release()
-    cv2.destroyAllWindows()
+    try:
+        with vcam:
+            stream(cats, Controls(picker, mouse), trackers, vcam, webcam)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        webcam.release()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
