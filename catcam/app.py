@@ -42,7 +42,7 @@ BLINK_SMOOTHING = 0.7  # 0..1, higher = snappier; kept snappy so blinks show
 # One Euro filters: lower MIN_CUTOFF = less jitter when still, higher BETA =
 # less lag when moving fast. Expression speeds are in face widths per second.
 ROTATION_MIN_CUTOFF, ROTATION_BETA = 0.8, 3.5
-EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA = 3.0, 60.0
+EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA = 1.5, 30.0
 
 # Blendshape score range mapped to 0..1 eye closedness...
 BLINK_RANGE = (0.3, 0.6)

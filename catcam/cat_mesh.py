@@ -34,15 +34,22 @@ LIP_SEAM = 0.0015  # half the gap between the lips of the closed mouth
 # Framing: ear tips and chin as fractions of the screen height.
 TOP_MARGIN, CHIN_LINE = 0.02, 0.93
 
-# Around each eye the face moves rigidly (with the eye corners): a person's
-# eyelids travel further than these squinting cats' eyes are tall, so copying
-# them would fold the mesh. The eyelids are drawn closed in the texture instead.
-# Ellipse around the eye, in eye widths, inside which the face is rigid, with a
-# soft edge from EYE_RIGID[0] to [1] of its radius.
+# Around each eye the face moves rigidly: a person's eyelids travel further
+# than these squinting cats' eyes are tall, so copying them would fold the
+# mesh, and the few triangles inside an eye would turn tracking noise into
+# zigzags. The eyelids are drawn closed in the texture instead. Ellipse around
+# the eye, in eye widths, inside which the face is rigid, with a soft edge from
+# EYE_RIGID[0] to [1] of its radius; the eye follows the average of the points
+# around it (EYE_ANCHOR band, not above the eye: brows move on their own).
 EYE_ELLIPSE = (0.75, 0.5)
 EYE_RIGID = (0.55, 1.0)
+EYE_ANCHOR = (0.9, 1.5)
 EYE_CORNERS = ((33, 133), (263, 362))  # image-left eye, image-right eye
-IRISES = range(468, 478)  # left free, so the cat's gaze follows yours
+# Each face point's movement is averaged with its neighbours' (except on the
+# lips, which must stay crisp to open), which evens out tracking noise.
+SMOOTHING = 0.035  # face widths
+OUTER_LIPS = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,
+              375, 321, 405, 314, 17, 84, 181, 91, 146]  # around the mouth
 
 # Inner lip contours, both running corner (78) to corner (308).
 UPPER_INNER_LIP = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308]
@@ -253,20 +260,37 @@ def _skull_points(alpha: np.ndarray, face: np.ndarray, face_width: float, outlin
     return np.column_stack([grid, z])
 
 
-def _eye_weights(face: np.ndarray) -> np.ndarray:
-    """(2, 478) how rigidly each face point follows each eye's corners."""
-    weights = np.zeros((len(EYE_CORNERS), len(face)))
+def _eye_weights(face: np.ndarray):
+    """Per eye: how rigidly each face point moves with the eye (2, 478), and
+    the averaging weights of the points the eye follows (2, 478)."""
+    rigid = np.zeros((len(EYE_CORNERS), len(face)))
+    anchor = np.zeros_like(rigid)
     for eye, corners in enumerate(EYE_CORNERS):
         a, b = face[list(corners), :2]
         width = np.linalg.norm(a - b)
         d = (face[:, :2] - (a + b) / 2) / (np.array(EYE_ELLIPSE) * width)
         r = np.linalg.norm(d, axis=1)
         t = np.clip((r - EYE_RIGID[0]) / (EYE_RIGID[1] - EYE_RIGID[0]), 0, 1)
-        weights[eye] = 1 - t * t * (3 - 2 * t)  # smoothstep falloff
+        rigid[eye] = 1 - t * t * (3 - 2 * t)  # smoothstep falloff
+        ring = (r > EYE_ANCHOR[0]) & (r < EYE_ANCHOR[1]) & (d[:, 1] > -0.4)
+        ring[list(corners)] = True
+        anchor[eye] = ring / ring.sum()
     for eye, (upper, lower) in enumerate(EYES):
-        weights[eye, upper + lower] = 1  # the lids themselves always
-    weights[:, list(IRISES)] = 0
-    return weights
+        rigid[eye, upper + lower] = 1  # the lids themselves always
+    return rigid, anchor
+
+
+def _smoothing(face: np.ndarray, face_width: float) -> np.ndarray:
+    """(478, 478) matrix averaging each point's movement with its neighbours'."""
+    lips = np.zeros(len(face), bool)
+    outline = face[OUTER_LIPS, :2].astype(np.float32)
+    for i, (x, y) in enumerate(face[:, :2]):
+        lips[i] = cv2.pointPolygonTest(outline, (float(x), float(y)), True) > -0.01 * face_width
+    dist = np.linalg.norm(face[:, None, :2] - face[None, :, :2], axis=2)
+    weights = np.exp(-((dist / (SMOOTHING * face_width)) ** 2)) * ~lips[None, :]
+    weights[lips] = 0
+    weights[lips, lips] = 1  # lips keep their own movement
+    return weights / weights.sum(axis=1, keepdims=True)
 
 
 def _face_triangles(points_2d: np.ndarray, face_width: float) -> np.ndarray:
@@ -355,7 +379,8 @@ class CatMesh:
         weights /= weights.sum(axis=1, keepdims=True) + 1e-9
         falloff = np.exp(-((dist.min(axis=1) / (FUR_FOLLOW[1] * self.face_width)) ** 2))
         self.fur_follow = weights * falloff[:, None]  # (fur points, face points)
-        self.eye_weights = _eye_weights(face)
+        self.eye_rigid, self.eye_anchor = _eye_weights(face)
+        self.smoothing = _smoothing(face, self.face_width)
         # Rotate around the middle of the face so the head turns in place.
         self.pivot = np.array([face[:, 0].mean(), face[1, 1], np.median(face[:, 2])])
         self.focal = CAMERA_DISTANCE * self.face_width
@@ -396,11 +421,10 @@ class CatMesh:
         return self.offset + self.pivot[:2] * self.scale, self.face_width * self.scale
 
     def _steady_eyes(self, offsets: np.ndarray) -> np.ndarray:
-        """Offsets with the eye regions moving rigidly with their corners."""
-        out = offsets.copy()
-        for weights, corners in zip(self.eye_weights, EYE_CORNERS):
-            rigid = offsets[list(corners)].mean(axis=0)
-            out += weights[:, None] * (rigid - out)
+        """Offsets smoothed between neighbours, with the eye regions moving rigidly."""
+        out = self.smoothing @ offsets
+        for rigid, anchor in zip(self.eye_rigid, self.eye_anchor):
+            out += rigid[:, None] * (anchor @ out - out)
         return out
 
     def _shape(self, offsets: np.ndarray) -> np.ndarray:

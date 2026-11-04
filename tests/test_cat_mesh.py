@@ -92,8 +92,10 @@ def test_eyelid_motion_does_not_bend_the_mesh(meshes):
         offsets[brow, 1] = -0.02 * mesh.face_width
         steady = mesh._steady_eyes(offsets)
         for upper, lower in EYES:
-            np.testing.assert_allclose(steady[upper + lower], 0, atol=1e-9)
-        assert steady[brow, 1] == pytest.approx(offsets[brow, 1]), cat.name  # brows still move
+            lids = steady[upper + lower]
+            np.testing.assert_allclose(lids - lids[0], 0, atol=1e-9)  # the eye doesn't deform
+            assert np.abs(lids[0]).max() < 0.01 * mesh.face_width, cat.name  # ...nor follow the lids
+        assert steady[brow, 1] < -0.005 * mesh.face_width, cat.name  # brows still move
 
 
 def _open(mesh, amount):
