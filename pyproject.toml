@@ -10,3 +10,12 @@ dependencies = [
     "pyvirtualcam>=0.15.0",
     "scipy>=1.18.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
+prepare = [
+    "rembg[cpu]>=2.0.86",
+]
