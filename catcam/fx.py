@@ -115,6 +115,65 @@ def full_frame(picture: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return frame
 
 
+PERMISSION_HINT = (
+    "Shortcuts need keyboard access while another app is in front:\n"
+    "  System Settings > Privacy & Security > Input Monitoring > turn on your terminal app\n"
+    "  (Terminal, iTerm, Warp, ...), then quit and reopen the terminal and run Cat Cam again."
+)
+
+
+class MacKeys:
+    """Key presses from every app on macOS, via a listen-only event tap.
+
+    Needs the Input Monitoring permission for the terminal app; without it the
+    tap can't be created, and macOS is asked to show its permission prompt.
+    """
+
+    def __init__(self, press, release, lost):
+        self.press, self.release, self.lost = press, release, lost
+        self.ready = threading.Event()
+        self.tap = None
+
+    def start(self) -> bool:
+        import Quartz
+
+        if not Quartz.CGPreflightListenEventAccess():
+            Quartz.CGRequestListenEventAccess()  # the system prompt (macOS shows it once per app)
+            return False
+        threading.Thread(target=self._run, daemon=True).start()
+        self.ready.wait(5)
+        return self.tap is not None
+
+    def _run(self):
+        import Quartz
+
+        mask = Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown) | Quartz.CGEventMaskBit(Quartz.kCGEventKeyUp)
+        self.tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly, mask, self._event, None,
+        )
+        if self.tap is None:
+            self.ready.set()
+            return
+        source = Quartz.CFMachPortCreateRunLoopSource(None, self.tap, 0)
+        Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), source, Quartz.kCFRunLoopDefaultMode)
+        Quartz.CGEventTapEnable(self.tap, True)
+        self.ready.set()
+        Quartz.CFRunLoopRun()
+
+    def _event(self, proxy, kind, event, refcon):
+        import Quartz
+
+        if kind in (Quartz.kCGEventTapDisabledByTimeout, Quartz.kCGEventTapDisabledByUserInput):
+            Quartz.CGEventTapEnable(self.tap, True)
+            self.lost()  # releases may have been missed
+        elif kind in (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp):
+            _, chars = Quartz.CGEventKeyboardGetUnicodeString(event, 4, None, None)
+            if chars:
+                (self.press if kind == Quartz.kCGEventKeyDown else self.release)(chars)
+        return event
+
+
 class Effects:
     """Tracks pressed keys (from any app) and runs the effect of the one pressed."""
 
@@ -133,32 +192,31 @@ class Effects:
         """Listen to the keyboard globally (only if there are effects)."""
         if not self.effects:
             return
+        if sys.platform == "darwin":
+            if not MacKeys(self.press, self.release, self.release_all).start():
+                print(PERMISSION_HINT)
+            return
         from pynput import keyboard
 
-        listener = keyboard.Listener(on_press=self.press, on_release=self.release)
-        listener.daemon = True
-        listener.start()
-        listener.wait()
-        if getattr(listener, "IS_TRUSTED", True) is False:
-            print("Keys pressed while another app is in front need permission: System Settings > "
-                  "Privacy & Security > Accessibility (and Input Monitoring) > allow your terminal, "
-                  "then restart.")
+        def char(key):
+            return getattr(key, "char", None)
 
-    @staticmethod
-    def _char(key) -> str | None:
-        char = getattr(key, "char", None)
-        return char.lower() if char else None
+        keyboard.Listener(on_press=lambda k: self.press(char(k)),
+                          on_release=lambda k: self.release(char(k)), daemon=True).start()
 
-    def press(self, key):
-        char = self._char(key)
+    def press(self, char: str | None):
+        char = char.lower() if char else None
         if char in self.effects:
             with self.lock:
                 self.down.setdefault(char, time.monotonic())  # key repeat keeps the first time
 
-    def release(self, key):
-        char = self._char(key)
+    def release(self, char: str | None):
         with self.lock:
-            self.down.pop(char, None)
+            self.down.pop(char.lower() if char else None, None)
+
+    def release_all(self):
+        with self.lock:
+            self.down.clear()
 
     def active(self, now: float) -> str | None:
         """The effect to show: the most recently pressed key down long enough."""

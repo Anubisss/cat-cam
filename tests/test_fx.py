@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import cv2
 import numpy as np
 import pytest
@@ -73,7 +71,7 @@ def effects(monkeypatch):
 
 
 def key(char):
-    return SimpleNamespace(char=char)
+    return char
 
 
 def test_short_taps_do_nothing(effects):
@@ -109,5 +107,26 @@ def test_silent_effect_and_cat_without_a_picture(effects):
 
 def test_other_keys_are_ignored(effects):
     effects.press(key("a"))
-    effects.press(SimpleNamespace())  # special keys have no char
+    effects.press(None)  # special keys have no character
     assert effects.down == {}
+
+
+def test_lost_releases_clear_pressed_keys(effects):
+    effects.press("k")
+    effects.release_all()
+    assert effects.down == {}
+
+
+def test_mac_key_events_reach_the_effects():
+    pytest.importorskip("Quartz")
+    import Quartz
+
+    from catcam.fx import MacKeys
+
+    seen = []
+    keys = MacKeys(lambda c: seen.append(("down", c)), lambda c: seen.append(("up", c)), lambda: None)
+    for down in (True, False):
+        event = Quartz.CGEventCreateKeyboardEvent(None, 40, down)  # the K key
+        kind = Quartz.kCGEventKeyDown if down else Quartz.kCGEventKeyUp
+        assert keys._event(None, kind, event, None) is event  # listen-only: passed on unchanged
+    assert seen == [("down", "k"), ("up", "k")]
