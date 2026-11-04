@@ -39,7 +39,17 @@ virtual camera, and everything runs locally on your computer.
    You only do this once. Afterwards, keep OBS closed while Cat Cam runs, or
    it takes the virtual camera for itself.
 
-3. **Get the code**:
+3. **Allow keyboard access for your terminal app.** A few keyboard
+   shortcuts also work while Zoom is in front, which macOS only allows with
+   *Input Monitoring*. macOS usually does **not** ask for it by itself:
+   1. Open *System Settings → Privacy & Security → Input Monitoring*.
+   2. If your terminal app (Terminal, iTerm, Warp, ...) isn't in the list,
+      click **+** at the bottom, choose it from *Applications*, and add it.
+   3. Switch it on.
+   4. **Quit and reopen the terminal app** (⌘Q). The permission only takes
+      effect after a restart.
+
+4. **Get the code**:
 
    ```sh
    git clone https://github.com/tarrcimar/cat-cam.git
@@ -57,10 +67,6 @@ whether your terminal may use the camera; allow it. If you said no, enable it
 under *System Settings → Privacy & Security → Camera* and run again.
 
 A window opens with the cat picker. Click a cat, or press its number.
-
-macOS may also ask to let your terminal use *Accessibility* / *Input
-Monitoring*. Allow it: a few keyboard shortcuts work even while Zoom is in
-front. Restart Cat Cam after allowing it.
 
 In Zoom, go to *Settings → Video → Camera* and choose **OBS Virtual Camera**.
 Do the same in any other app (Meet, Teams, FaceTime, ...). If the camera is
