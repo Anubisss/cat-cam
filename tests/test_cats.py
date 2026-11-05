@@ -54,7 +54,8 @@ def test_load_rejects_missing_cutout(tmp_path):
 
 
 def test_shipped_cats(real_cats):
-    assert [c.name for c in real_cats] == ["Balint", "David", "Dori", "Laci", "Mate", "TMarci", "VMarci"]
+    names = ["Balint", "David", "Dori", "Laci", "Mate", "Milan", "TMarci", "VMarci"]
+    assert [c.name for c in real_cats] == names
     for cat in real_cats:
         assert cat.sprite.shape[2] == 4
         assert cat.points.shape == (478, 3)
