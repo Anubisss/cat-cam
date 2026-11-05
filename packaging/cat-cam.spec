@@ -41,5 +41,7 @@ app = BUNDLE(
         "NSHighResolutionCapable": True,
         "NSCameraUsageDescription":
             "Cat Cam turns your webcam picture into a cat. Your camera picture never leaves your computer.",
+        "NSMicrophoneUsageDescription":
+            "Cat Cam turns your voice into your animal's. Your voice never leaves your computer.",
     },
 )

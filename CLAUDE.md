@@ -24,6 +24,10 @@ an image and check them, as the tests only catch holes and gross errors.
 - `catcam/app.py`: main loop (webcam, tracking, render, virtual camera), the
   preview window, keys, the switches; `glass.py` draws the window's glass
   panels, switches and text, `picker.py` the cat picker.
+- `catcam/voice.py`: your microphone as the animal's sounds (barks per
+  syllable), out to the BlackHole virtual microphone. `idle.py`: what the
+  animal does by itself while you are still. `background.py`: a picture or
+  video behind the animal.
 - `catcam/cat_mesh.py`: the 3D head mesh, its shaders and the drawn mouth;
   `mouth_fit.py`, `ears.py` and `lighting.py` feed into it.
 - `catcam/cat_face.py`: eyelids. `face_motion.py`: expression transfer.
@@ -36,7 +40,7 @@ an image and check them, as the tests only catch holes and gross errors.
   `.glb` head (e.g. from TRELLIS.2) into those assets:
   `uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name>`.
   The whole recipe, from installing TRELLIS.2 on to checking the result, is in
-  `docs/3d-heads.md`; `tools/trellis/` holds its install script and fixes and
+  `docs/3d-heads.md`; `tools/trellis/` has its install script and fixes and
   `tools/head3d_sheet.py` renders a cat's heads in the poses worth checking.
 - `catcam/prepare.py`, `landmark_fit.py`: turn portraits into cat assets
   (only needed when adding or changing a cat).

@@ -26,6 +26,7 @@ from mediapipe.tasks.python import BaseOptions, vision
 
 from catcam import cats as cat_assets
 from catcam import glass
+from catcam.background import Background, Chooser, behind
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.ears import EarMotion
@@ -33,19 +34,29 @@ from catcam.face_motion import ExpressionTransfer
 from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
 from catcam.head3d import Head3D, has_head
-from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
+from catcam.head_pose import (
+    OneEuroFilter,
+    facing_camera,
+    relative_rotation,
+    rotation_of,
+    to_matrix,
+    to_vector,
+)
+from catcam.idle import Idle
 from catcam.paths import FACE_MODEL, HAND_MODEL, LOG_FILE
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker
 from catcam.tail import Tail, TailHand, TailSkin, tail_skin
+from catcam.voice import VirtualMic, Voice
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
 # Switches in a glass pill in the preview's top left corner: (name, label, key).
 # While "Tail" is on, a hand alone in view lifts a tail instead of being a paw
-# (two hands are two paws); "3D head" shows the cat's 3D head, if it has one.
-TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"))
+# (two hands are two paws); "3D head" shows the cat's 3D head, if it has one;
+# "Background" asks for a picture or video to put behind the animal.
+TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"), ("background", "Background", "b"))
 PILL = (16, 16, 44)  # the pill's x, y and height (preview px)
 CAPSULE = (44, 16)  # the bottom capsule's height and its gap to the window's edge
 # Keys shown in the bottom capsule (the switches show their own).
@@ -86,6 +97,7 @@ class Cat:
     head3d: Head3D | None  # the real 3D head, if this cat has one
     paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
     tail: TailSkin | None
+    sounds: list  # what your syllables become, see catcam.voice; empty = your own voice
     sprite: np.ndarray
     background: np.ndarray
 
@@ -111,6 +123,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             head3d=Head3D(renderer, name, mesh, a.sprite, a.points, a.background) if has_head(name) else None,
             paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
             tail=tail_skin(a.paws),
+            sounds=a.sounds,
             sprite=a.sprite,
             background=a.background,
         ))
@@ -162,11 +175,13 @@ class FaceState:
         self.rotation_filter = OneEuroFilter(ROTATION_MIN_CUTOFF, ROTATION_BETA)
         self.expression_filter = OneEuroFilter(EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA)
         self.transfer = ExpressionTransfer()
-        self.neutral_pose = None
+        self.neutral_pose = None  # the pose that faces the viewer; None = looking into the camera
+        self.take_pose = False
         self.head = np.zeros(3)  # rotation vector; 0 = facing the viewer
         self.blink = np.zeros(2)
         self.ear_motion = EarMotion()
         self.ears = np.zeros(2)  # ear angles, see catcam.ears
+        self.idle = Idle()  # what the animal does on its own while you are still
         self.offsets = np.zeros((478, 3))  # in face widths
         self.face = None  # last seen face landmarks in px
         self.last_seen = None
@@ -174,41 +189,56 @@ class FaceState:
     def reset_neutral(self):
         """Your next face and pose become the neutral ones."""
         self.transfer.reset()
-        self.neutral_pose = None
+        self.take_pose = True
 
-    def update(self, result, cam_size, dt: float, now: float):
+    def update(self, result, cam_size, dt: float, now: float, talking: bool = False):
+        """result: the face tracker's; talking: whether you are speaking (see catcam.voice)."""
         if not result.face_landmarks:  # no face -> keep the last pose and expression
             self.ears = self.ear_motion.update(None, dt, now)
+            self.idle.update(self.head, None, talking, dt, now)
             return
         self.face = landmarks_px(result.face_landmarks[0], *cam_size)
         self.last_seen = now
-        pose = rotation_of(result.facial_transformation_matrixes[0])
-        if self.neutral_pose is None:
-            # The way you sit at the start (e.g. looking down at the screen
-            # past the camera) is "facing the viewer" for the cat.
-            self.neutral_pose = pose
-        self.head = self.rotation_filter(to_vector(relative_rotation(pose, self.neutral_pose)), dt)
+        matrix = result.facial_transformation_matrixes[0]
+        pose = rotation_of(matrix)
+        if self.take_pose:
+            # Your pose when you asked for it (e.g. looking down at the screen
+            # past the camera) is "facing the viewer" for the cat from now on.
+            self.neutral_pose, self.take_pose = pose, False
+        reference = facing_camera(matrix) if self.neutral_pose is None else self.neutral_pose
+        self.head = self.rotation_filter(to_vector(relative_rotation(pose, reference)), dt)
         scores = {c.category_name: c.score for c in result.face_blendshapes[0]}
         self.ears = self.ear_motion.update(scores, dt, now)
         closed = blinks(scores, self.face, self.transfer.neutral)
         self.blink = self.blink + BLINK_SMOOTHING * (closed - self.blink)
         relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
         self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
+        self.idle.update(self.head, scores, talking, dt, now)
 
 
-def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | None) -> np.ndarray:
+def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | None,
+           background: np.ndarray | None = None) -> np.ndarray:
     """tail_hand: the hand ("Left", "Right") that lifts the tail instead of
-    being a paw, if any. The tail is drawn while it sinks away, too."""
+    being a paw, if any. The tail is drawn while it sinks away, too.
+    background: a picture (BGR, output size) to put behind the animal."""
     sprite = cat.eyelids.render(blink=tuple(state.blink))
     offsets = state.transfer.to_cat(state.offsets, cat.points)
-    frame = cat.mesh.render(sprite, offsets, to_matrix(state.head), state.ears)
+    rotation = to_matrix(state.head + state.idle.head)
+    renderer = cat.mesh.renderer
+    renderer.keep_coverage = background is not None
+    if isinstance(cat.mesh, Head3D):
+        frame = cat.mesh.render(sprite, offsets, rotation, state.ears, state.idle.breath)
+    else:
+        frame = cat.mesh.render(sprite, offsets, rotation, state.ears)
+    if background is not None:
+        frame = behind(frame, renderer.coverage, background)
     if cat.tail is None:
         return paws.draw(frame, cat.paw)
     hidden = (tail_hand,) if tail_hand else ()
     return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=hidden)
 
 
-def toggle_rects(head3d: bool) -> dict[str, tuple[int, int, int, int]]:
+def toggle_rects(head3d: bool = True) -> dict[str, tuple[int, int, int, int]]:
     """Each switch's area in the pill (x, y, w, h, preview px); head3d: whether the
     cat has a 3D head, else its switch is left out."""
     x, y, h = PILL
@@ -276,12 +306,12 @@ def _message(view: np.ndarray, lines: list[str], y: int):
 
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None,
-            tail: bool = False, head3d: bool | None = None) -> np.ndarray:
+            tail: bool = False, head3d: bool | None = None, background: bool = False) -> np.ndarray:
     """Mirrored like a mirror, with the switches and hints on glass, none of which
     reach the call. head3d: whether the 3D head is on; None leaves its switch out
     (the cat has none)."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
-    states = {"tail": tail} | ({} if head3d is None else {"head3d": head3d})
+    states = {"tail": tail} | ({} if head3d is None else {"head3d": head3d}) | {"background": background}
     _switches(view, states)
     _capsule(view, cat.name)
     if looking:
@@ -369,6 +399,11 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Cat face filter for Zoom.")
     parser.add_argument("--camera", type=int, default=0, metavar="N",
                         help="webcam to use (default 0; try 1 if the wrong camera opens)")
+    parser.add_argument("--mic", default=None, metavar="NAME",
+                        help="microphone, by name or number (default: the system's; "
+                             "list them: python -m catcam.voice --list)")
+    parser.add_argument("--background", default=None, metavar="FILE",
+                        help="a picture or video to put behind the animal")
     parser.add_argument("--check", action="store_true",
                         help="load and draw every cat once, without camera, then quit")
     return parser.parse_args(argv)
@@ -381,7 +416,8 @@ class Controls:
         self.picker, self.mouse = picker, mouse
         self.current, self.picking, self.picked_once = 0, True, False
         self.tail = False  # the tail switch
-        self.head3d = False  # the 3D head switch
+        self.head3d = True  # the 3D head switch
+        self.background = False  # the background switch
         self.has_head3d = True  # whether the current cat has a 3D head (its switch shows)
         self.quit = False
 
@@ -405,6 +441,8 @@ class Controls:
                 self.tail = not self.tail
             if key == ord("d") or hit == "head3d":
                 self.head3d = not self.head3d
+            if key == ord("b") or hit == "background":
+                self.background = not self.background
             if key == ord("c"):
                 self.picking = True
                 self.picker.hover = None
@@ -430,9 +468,12 @@ def frames(webcam):
             time.sleep(0.01)
 
 
-def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam, webcam):
+def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, trackers, vcam, webcam,
+           background: Background | None = None):
     face_tracker, hand_tracker = trackers
     state, paws, tail, tail_hands = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), TailHand()
+    chooser = Chooser()
+    controls.background = background is not None
     start = last = time.monotonic()
     notice_until = 0.0
     app = terminal_name()
@@ -444,17 +485,21 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         cam_size = (frame.shape[1], frame.shape[0])
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         timestamp = int((now - start) * 1000)
-        state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now)
+        state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now,
+                     voice.syllables.speaking)
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = shown(cats[controls.current], controls.head3d)
         controls.has_head3d = cat.head3d is not None
+        voice.sounds = cat.sounds
+        background = _follow_switch(controls, chooser, background)
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
         tail_hand = tail_hands.update(paws.slots) if controls.tail and cat.tail is not None else None
         hand = paws.slots.get(tail_hand, {}) if tail_hand else {}
         tail.update(hand.get("params"), hand.get("presence", 0.0), dt, *cat.mesh.face_on_screen())
 
         special = effects.update(now, cat.name)
-        out = special if special is not None else render(cat, state, paws, tail, tail_hand)
+        picture = background.frame(now) if background is not None else None
+        out = special if special is not None else render(cat, state, paws, tail, tail_hand, picture)
         vcam.send(out)
         if controls.picking:
             cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None, out))
@@ -462,13 +507,38 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
             looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
             cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None,
                                        tail=controls.tail,
-                                       head3d=controls.head3d if cat.head3d is not None else None))
+                                       head3d=controls.head3d if cat.head3d is not None else None,
+                                       background=controls.background))
         key = cv2.waitKey(1) & 0xFF
         if effects.needs_permission(key, now):
             notice_until = now + 10
         controls.handle(key, state)
         if controls.quit or window_closed():
             return
+
+
+def _follow_switch(controls: Controls, chooser: Chooser, background: Background | None) -> Background | None:
+    """The background as the switch wants it: switched on, it asks for a picture or
+    video (the switch goes back off if none is chosen); switched off, it goes."""
+    if not controls.background:
+        if background is not None:
+            background.close()
+        return None
+    if background is not None:
+        return background
+    if chooser.idle:
+        chooser.start()
+        return None
+    path = chooser.answer()
+    if path is None:  # still choosing
+        return None
+    if path:
+        try:
+            return Background(path, (OUT_W, OUT_H))
+        except ValueError as e:
+            print(e)
+    controls.background = False
+    return None
 
 
 def check(cats: list[Cat]):
@@ -519,19 +589,31 @@ def run(argv=None):
     vcam = open_virtual_camera()
     webcam = open_webcam(args.camera)
 
+    background = None
+    if args.background:
+        try:
+            background = Background(args.background, (OUT_W, OUT_H))
+        except ValueError as e:
+            sys.exit(str(e))
     effects = Effects(load_effects(), (OUT_W, OUT_H))
     effects.start()
+    voice = Voice()
+    mic = VirtualMic(voice, args.mic)
     cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
     mouse = Mouse(picker)
     cv2.setMouseCallback(WINDOW, mouse)
-    print(f"Streaming to '{vcam.device}'. Select it as the camera in Zoom.\n"
-          "Pick a cat in the window. Keep a relaxed face for a second at the start.")
+    print(f"Streaming to '{vcam.device}'. Select it as the camera in Zoom.")
+    if mic.start():
+        print(f"Listening to '{mic.heard}', sending your voice to '{mic.device}'. "
+              "Select it as the microphone in Zoom.")
+    print("Pick a cat in the window. Keep a relaxed face for a second at the start.")
     try:
         with vcam:
-            stream(cats, Controls(picker, mouse), effects, trackers, vcam, webcam)
+            stream(cats, Controls(picker, mouse), effects, voice, trackers, vcam, webcam, background)
     except KeyboardInterrupt:
         pass
     finally:
+        mic.stop()
         effects.stop()
         webcam.release()
         cv2.destroyAllWindows()

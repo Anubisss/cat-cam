@@ -1,6 +1,6 @@
 """The prepared cats: discovery and loading of their assets."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -8,6 +8,7 @@ import numpy as np
 
 from catcam.paths import ASSETS, PORTRAITS
 from catcam.paw_photos import is_paw_photo, paw_files
+from catcam.voice import load_sounds
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class CatAssets:
     background: np.ndarray  # (3,) BGR colour of the portrait's backdrop
     paws: dict  # {(view, hand): BGRA paw photo}, see catcam.paw_photos; empty if none
     mouth_set: bool = False  # lips placed by hand (all_cats/<Name>Mouth.txt), not to be corrected
+    sounds: list = field(default_factory=list)  # mono sounds from voice/, see catcam.voice; empty if none
 
 
 def available(assets: Path = ASSETS) -> list[str]:
@@ -59,4 +61,4 @@ def load(name: str, assets: Path = ASSETS) -> CatAssets:
     for key, path in paw_files(name, assets).items():
         if path.is_file():
             paws[key] = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    return CatAssets(name, sprite, points, background, paws, mouth_set)
+    return CatAssets(name, sprite, points, background, paws, mouth_set, load_sounds(folder / "voice"))

@@ -1,11 +1,13 @@
 # Cat Cam
 
-Be Woofgang, a golden retriever, in your Zoom calls. He turns, nods and tilts
-with your head, copies your whole face (brows, blinks, cheeks, smile, open
-mouth) and your hands become his paws: the top of the paw when you show the
-back of your hand, the toe beans when you show your palm. Turn on **3D head** and
-he becomes a real 3D head whose jaw drops when you open your mouth, and the
-side of his head that turns away from the light falls into shadow.
+Be Woofgang, a golden retriever, in your Zoom calls. He is a real 3D head that
+turns, nods and tilts with your head, copies your whole face (brows, blinks,
+cheeks, smile) and opens his own mouth with yours, his jaw swinging down, while
+the side of his head that turns away from the light falls into shadow. Your
+hands become his paws, toe by toe: the top of the paw when you show the back of
+your hand, the toe beans when you show your palm. When you talk, the call hears
+him bark instead of your voice. When you sit still, he breathes and looks
+around on his own. And you can put any picture or video behind him.
 
 Your own face is never sent anywhere. Only the drawn cat goes out to the
 virtual camera, and everything runs locally on your computer.
@@ -62,7 +64,19 @@ The rest of this page is for running it from the code instead.
    4. **Quit and reopen the terminal app** (⌘Q). The permission only takes
       effect after a restart.
 
-4. **Get the code**:
+4. **Optional: his voice.** For the call to hear barks instead of your voice,
+   install the free BlackHole virtual microphone:
+
+   ```sh
+   brew install blackhole-2ch
+   ```
+
+   Then, in Zoom, choose **BlackHole 2ch** as the microphone (*Settings →
+   Audio → Microphone*). Cat Cam listens to your real microphone and sends
+   the barks there. Without BlackHole everything else works, and the call
+   hears your real voice.
+
+5. **Get the code**:
 
    ```sh
    git clone https://github.com/tarrcimar/cat-cam.git
@@ -85,22 +99,33 @@ In Zoom, go to *Settings → Video → Camera* and choose **OBS Virtual Camera**
 Do the same in any other app (Meet, Teams, FaceTime, ...). If the camera is
 not listed, restart Zoom while Cat Cam is running.
 
-Keep a relaxed face for the first second. The cat compares your face against
-how it looks at the start, and the way you sit at the start counts as "looking
-at the viewer". If the cat looks grumpy or turned while you are relaxed, press
-`n`.
+Keep a relaxed face for the first second: the cat compares your face against
+how it looks at the start. Looking into the camera is looking at the viewer,
+wherever you sit. If the cat looks grumpy while you are relaxed, or you'd
+rather it faced the viewer while you look elsewhere (at the screen, say),
+press `n` while doing that.
 
 Raise your hands into the camera's view for paws. Turn a hand around to
-show the other side of the paw, and make a fist to curl its toes in.
+show the other side of the paw. Each toe follows one of your fingers: curl a
+finger and its toe curls in, make a fist and they all do.
 Turn on **Tail** in the top left corner of the window (or press `t`) for the
 cat's tail: while only one of your hands is in view, it lifts the tip of
 the tail instead of being a paw, and the rest of the tail rises from below,
 trails behind, curls and swishes on its own. Show both hands and they are
 two paws again. Turn it off for paws only.
 
-Cats with a 3D head (see [docs/3d-heads.md](docs/3d-heads.md)) also get a
-**3D head** switch next to it (or press `d`): the photo becomes a real 3D
-head that turns properly, and whose mouth opens with yours.
+The **3D head** switch next to it (or `d`) is on to begin with: turn it off
+for the flat photo head, which is lighter on older Macs. (Cats without a 3D
+head, see [docs/3d-heads.md](docs/3d-heads.md), don't have the switch.)
+
+Turn on **Background** (or press `b`) and pick a picture or a video: it goes
+behind the animal, in place of the plain backdrop. A video plays on a loop.
+Turn it off and on again to pick another.
+
+When you talk (and BlackHole is set up, see above), every syllable you say
+comes out as a bark, as loud and as high or low as you said it. When you sit
+still and quiet for a few seconds, he breathes, sways and looks around on his
+own, until you move or talk again.
 
 ### Keys (in the Cat Cam window)
 
@@ -111,7 +136,8 @@ head that turns properly, and whose mouth opens with yours.
 | `Esc`      | close the picker                                          |
 | `t`        | tail on/off (same as the Tail switch)                     |
 | `d`        | 3D head on/off, for cats that have one                    |
-| `n`        | "this is my neutral face": recalibrate face and head pose |
+| `b`        | background on/off (on asks for a picture or video)        |
+| `n`        | "this is my neutral face, looking at the viewer": recalibrate face and head pose |
 | `q`        | quit (closing the window or Ctrl+C also works)            |
 
 The preview in the window is mirrored, like a mirror. The call gets the
@@ -120,8 +146,13 @@ unmirrored picture, just as a normal camera would send.
 ### Options
 
 ```sh
-uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera opens)
+uv run cat-cam --camera 1             # use another webcam (e.g. if your iPhone camera opens)
+uv run cat-cam --mic "USB"            # listen to another microphone (part of its name)
+uv run cat-cam --background beach.jpg # start with this picture or video behind the animal
 ```
+
+`uv run python -m catcam.voice --list` lists the microphones;
+`uv run python -m catcam.voice` lets you hear the barks in your headphones.
 
 ## Troubleshooting
 
@@ -133,6 +164,9 @@ uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera ope
 | Zoom does not list "OBS Virtual Camera" | Restart Zoom while Cat Cam is running. |
 | The cat looks off while you are relaxed | Press `n` with a neutral face. |
 | "Looking for your face..." | Face the camera and make sure your face is lit. |
+| The call hears your real voice | Choose **BlackHole 2ch** as the microphone in Zoom. If Cat Cam says no virtual microphone was found, install BlackHole (see above) and restart Cat Cam. |
+| "BlackHole is installed but macOS hasn't loaded it yet" | Run `sudo killall coreaudiod` (or restart the Mac), then restart Cat Cam. |
+| No barks at all | Allow microphone access for your terminal under *System Settings → Privacy & Security → Microphone*. |
 
 ## Add your own cat
 
@@ -176,6 +210,8 @@ These constants sit at the top of their files:
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
 | `LENGTH`, `SWISH`, `DRAG`, `SWITCH_FRAMES` | `catcam/tail.py` | how long the tail is, how much it sways by itself, how quickly it calms down, and how long a change between one and two hands must last before the tail follows |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
+| `STILL_AFTER`, `BREATHING`, `SWAY`, `LOOK` | `catcam/idle.py` | how long you must be still before he acts on his own, his breathing, his sway, and how far he looks around |
+| `ABOVE_NOISE`, `MIN_GAP`, `PITCH_FOLLOW` | `catcam/voice.py` | how loud you must talk to bark, the shortest time between barks, and how much the bark's pitch follows yours |
 
 ## How it works
 
@@ -197,7 +233,13 @@ These constants sit at the top of their files:
    a chain of points whose tip is pulled toward your hand; the rest is
    simulated with momentum, even bending and a bend limit, and wrapped in the
    skin of the cat's paw photo.
-6. The frame goes to the OBS virtual camera through pyvirtualcam.
+6. While you are still and quiet, `catcam/idle.py` adds breathing, a sway and
+   glances to the head. A background picture or video goes wherever the
+   animal isn't (`catcam/background.py`).
+7. The frame goes to the OBS virtual camera through pyvirtualcam. Your
+   microphone goes through `catcam/voice.py`, which finds the syllables in
+   your loudness and plays a bark for each, out to the BlackHole virtual
+   microphone.
 
 ## Development
 
@@ -227,6 +269,9 @@ catcam/
   lighting.py      shading as the head turns
   face_motion.py   expression transfer
   head_pose.py     head rotation and the One Euro smoothing filter
+  idle.py          what the animal does by itself while you are still
+  voice.py         your voice as barks, out to the virtual microphone
+  background.py    a picture or video behind the animal
   paws.py          paws
   tail.py          the tail: a chain of points simulated like a real tail
   paw_photos.py    turns paw photos into paw sprites (used by prepare)
@@ -245,3 +290,6 @@ packaging/         the standalone macOS app: PyInstaller spec, icon, build scrip
 ```
 
 The MediaPipe models in `models/` are by Google and licensed under Apache 2.0.
+Woofgang's bark (`assets/cats/Woofgang/voice/bark.ogg`) is CC0: a recording by
+Geoff-Bremner-Audio on [Freesound](https://freesound.org/s/688201/), as cleaned
+up for [Space Station 14](https://github.com/space-wizards/space-station-14).

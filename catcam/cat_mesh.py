@@ -401,6 +401,18 @@ class Renderer:
             depth_attachment=self.ctx.depth_renderbuffer(size, samples=MSAA_SAMPLES),
         )
         self.resolved = self.ctx.framebuffer(color_attachments=[self.ctx.renderbuffer(size, 4)])
+        self.keep_coverage = False  # also read back where the animal is drawn (for a background)
+        self.coverage = None  # (h, w) uint8, 255 = drawn, from the last read with keep_coverage
+
+    def read(self) -> np.ndarray:
+        """The frame just drawn, BGR with its top row first."""
+        if not self.keep_coverage:
+            data = self.resolved.read(components=3)
+            return np.frombuffer(data, np.uint8).reshape(self.out_h, self.out_w, 3)[::-1]
+        data = self.resolved.read(components=4)
+        rgba = np.frombuffer(data, np.uint8).reshape(self.out_h, self.out_w, 4)[::-1]
+        self.coverage = rgba[..., 3]
+        return np.ascontiguousarray(rgba[..., :3])
 
 
 class CatMesh:
@@ -410,7 +422,7 @@ class CatMesh:
         correct the lips onto the photo's crease (off when they were placed by hand)."""
         self.renderer = renderer
         self.out_w, self.out_h = renderer.out_w, renderer.out_h
-        self.bg = tuple(np.asarray(bg_color) / 255) + (1.0,)
+        self.bg = tuple(np.asarray(bg_color) / 255) + (0.0,)  # alpha 0: not the animal
         tex_h, tex_w = sprite.shape[:2]
 
         self.face_count = len(landmarks)
@@ -554,6 +566,4 @@ class CatMesh:
         self.texture.use(0)
         self.face_vao.render()
         r.ctx.copy_framebuffer(r.resolved, r.msaa)
-
-        data = r.resolved.read(components=3)
-        return np.frombuffer(data, np.uint8).reshape(self.out_h, self.out_w, 3)[::-1]
+        return r.read()

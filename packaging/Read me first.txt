@@ -18,12 +18,16 @@ INSTALL (once)
    System Settings > Privacy & Security, scroll down, click "Open Anyway"
    next to Cat Cam, and confirm. You only do this once.
 
-4. Allow camera access when macOS asks.
+4. Allow camera access when macOS asks, and microphone access too.
 
 5. A few keyboard shortcuts also work while Zoom is in front. For those,
    open System Settings > Privacy & Security > Input Monitoring and switch
    on Cat Cam (if it isn't listed, click + and choose Cat Cam from
    Applications). Then quit Cat Cam and open it again.
+
+6. Optional, for barks instead of your voice in the call: install the free
+   BlackHole 2ch virtual microphone (https://existential.audio/blackhole/,
+   or "brew install blackhole-2ch" in Terminal), then restart Cat Cam.
 
 USE
 
@@ -35,7 +39,15 @@ USE
 - Raise your hands into view for paws. Turn on "Tail" in the top left corner
   of the Cat Cam window (or press T): then one hand on its own lifts the
   cat's tail, and both hands are two paws.
-- Turn on "3D head" (or press D) for a real 3D head, on cats that have one.
+- "3D head" (or D) is on to begin with: a real 3D head. Turn it off for the
+  flat photo head.
+- Turn on "Background" (or press B) and pick a picture or video to put
+  behind the animal. Turn it off and on again to pick another.
+- With BlackHole installed, choose "BlackHole 2ch" as the microphone in
+  Zoom (Settings > Audio > Microphone): the call hears a bark for every
+  syllable you say, never your voice.
+- Sit still and quiet for a few seconds and he breathes and looks around
+  on his own.
 - In the Cat Cam window: C picks another cat, Q quits.
 
 TROUBLE?
@@ -43,4 +55,6 @@ TROUBLE?
 - Black picture in Zoom: OBS is running. Quit OBS and reopen Cat Cam.
 - "Cannot open webcam": allow Cat Cam under System Settings > Privacy &
   Security > Camera.
+- The call hears your real voice: choose "BlackHole 2ch" as the
+  microphone in Zoom. If BlackHole was just installed, restart the Mac.
 - Errors are also written to ~/Library/Logs/Cat Cam.log

@@ -175,22 +175,33 @@ def test_tail_switch_toggles_by_click_or_key():
 def test_head3d_switch_toggles_by_click_or_key():
     controls, state = _controls(), _State()
     controls.handle(ord("1"), state)  # leave the picker
-    assert not controls.head3d
+    assert controls.head3d  # on from the start
     controls.mouse(4, *_centre("head3d"), 0, None)
     controls.handle(-1, state)
-    assert controls.head3d and not controls.tail
+    assert not controls.head3d and not controls.tail
     controls.handle(ord("d"), state)
-    assert not controls.head3d
+    assert controls.head3d
+
+
+def test_background_switch_toggles_by_click_or_key():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    assert not controls.background
+    controls.mouse(4, *_centre("background"), 0, None)
+    controls.handle(-1, state)
+    assert controls.background
+    controls.handle(ord("b"), state)
+    assert not controls.background
 
 
 def test_no_head3d_switch_without_a_3d_head():
-    assert set(toggle_rects(False)) == {"tail"}
+    assert set(toggle_rects(False)) == {"tail", "background"}
     controls, state = _controls(), _State()
     controls.handle(ord("1"), state)
     controls.has_head3d = False
-    controls.mouse(4, *_centre("head3d"), 0, None)  # where it would be
+    controls.mouse(4, *_centre("background", False), 0, None)
     controls.handle(-1, state)
-    assert not controls.head3d
+    assert controls.head3d and controls.background  # the click went to the switch that is there
 
 
 def test_preview_shows_the_head3d_switch_only_for_cats_with_a_3d_head():
@@ -200,10 +211,13 @@ def test_preview_shows_the_head3d_switch_only_for_cats_with_a_3d_head():
     cat = SimpleNamespace(name="Test")
     x, y, w, h = toggle_rects(True)["head3d"]
     area = np.s_[y + 8:y + h - 8, x + 10:x + w - 10]  # inside the pill, off its rim
-    assert not preview(out, cat, False)[area].any()
     off, on = preview(out, cat, False, head3d=False)[area], preview(out, cat, False, head3d=True)[area]
     assert off.any()
     assert np.abs(on.astype(int) - off).sum() > 0
+    # Without a 3D head, the background switch takes its place.
+    without = preview(out, cat, False)[area]
+    assert np.abs(without.astype(int) - off).sum() > 0
+    assert toggle_rects(False)["background"][0] == x
 
 
 def test_clicks_in_the_picker_do_not_toggle_the_tail():
@@ -242,3 +256,24 @@ def test_tail_replaces_one_paw_only_while_on(real_cats):
     without = render(cat, FaceState(), paws, tail, tail_hand="Right")
     assert np.abs(with_paw[corner].astype(int) - plain[corner]).mean() > 10
     assert np.abs(without[corner].astype(int) - plain[corner]).mean() < 1
+
+
+@pytest.mark.gl
+def test_a_background_shows_around_the_animal(real_cats):
+    from catcam.app import FaceState, load_cats, render, shown
+    from catcam.cat_mesh import Renderer
+    from catcam.paws import Paws
+    from catcam.tail import Tail
+
+    renderer = Renderer((1280, 720))
+    for cat in load_cats(renderer):
+        for drawn in (cat, shown(cat, True)):
+            green = np.zeros((720, 1280, 3), np.uint8)
+            green[:] = (0, 255, 0)
+            plain = render(drawn, FaceState(), Paws(1280), Tail((1280, 720)), None)
+            out = render(drawn, FaceState(), Paws(1280), Tail((1280, 720)), None, green)
+            assert (out[5, 5] == (0, 255, 0)).all(), cat.name  # the corner: background
+            np.testing.assert_array_equal(out[360, 640], plain[360, 640])  # the face: the animal
+            assert not renderer.keep_coverage or out is not None
+    renderer.keep_coverage = False
+

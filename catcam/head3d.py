@@ -44,6 +44,7 @@ FLIP = np.diag([1.0, -1.0, -1.0])
 MOUTH_CORNERS = (UPPER_INNER_LIP[0], UPPER_INNER_LIP[-1])
 LIP_MIDDLE = (13, 14)  # where the upper and lower inner lips meet in the middle
 JAW_MAX = 1.0  # radians, the most the jaw tilts; beyond that it just drops with the lip
+BREATH_RISE = 0.008  # head heights a full breath lifts the head by
 OWN_MOUTH_INSIDE = (0.16, 0.06, 0.06)  # RGB of a head's own inside, seen between its parted lips
 
 VERTEX_SHADER = """
@@ -251,7 +252,7 @@ class Head3D:
         mesh = np.load(mesh_file)
         self.renderer, self.flat, self.open_sprite = renderer, flat, sprite
         self.out_w, self.out_h = renderer.out_w, renderer.out_h
-        self.bg = tuple(np.asarray(bg_color) / 255) + (1.0,)
+        self.bg = tuple(np.asarray(bg_color) / 255) + (0.0,)  # alpha 0: not the animal
 
         centre = (mesh["vertices"].min(0) + mesh["vertices"].max(0)) / 2
         self.rest = mesh["vertices"] - centre
@@ -272,6 +273,8 @@ class Head3D:
         distance = height / ((CHIN_LINE - TOP_MARGIN) * 2 * half)
         middle_ndc = 1 - (TOP_MARGIN + CHIN_LINE)
         self.shift = np.array([0.0, middle_ndc * distance * half, -distance])
+        self.lift = BREATH_RISE * height  # model units, at a full breath
+        self.moved = self.shift  # where the head is this frame (it rises as it breathes)
         self.proj = perspective(FOV, self.out_w / self.out_h, distance - DEPTH_SPAN, distance + DEPTH_SPAN)
         px_per_unit = self.out_h / (2 * half * distance)
         lo, hi = self.rest[:, 1].min() + np.array(FACE_BAND) * height
@@ -388,7 +391,7 @@ class Head3D:
         # The gap between the lips on screen: upper lip left to right, lower lip back.
         ring = UPPER_INNER_LIP + LOWER_INNER_LIP[::-1]
         lips = self.landmarks[ring] + self.lips_meet + landmark_moves[ring] @ self.to_model.T
-        clip = np.column_stack([lips @ model_rot.T + self.shift, np.ones(len(ring))]) @ self.proj.T
+        clip = np.column_stack([lips @ model_rot.T + self.moved, np.ones(len(ring))]) @ self.proj.T
         ndc = clip[:, :2] / clip[:, 3:]
         screen = (ndc + 1) / 2 * (self.out_w, self.out_h)  # gl_FragCoord: px from the bottom left
         opening = [tuple(p) for p in screen]
@@ -403,16 +406,20 @@ class Head3D:
         self.mouth_vao.render()
 
     def render(self, sprite: np.ndarray, offsets: np.ndarray, rotation: np.ndarray,
-               ears=(0.0, 0.0)) -> np.ndarray:
+               ears=(0.0, 0.0), breath: float = 0.0) -> np.ndarray:
         """Draw the head with face offsets (478, 3) portrait px, head rotation (image
-        axes, as for CatMesh) and ear angles; returns BGR. sprite: the portrait with
-        its eyelids drawn as blinking (or the open-eyed one)."""
+        axes, as for CatMesh), ear angles and breath (0..1, how full its lungs are,
+        see catcam.idle); returns BGR. sprite: the portrait with its eyelids drawn
+        as blinking (or the open-eyed one)."""
         if sprite is not self._uploaded:
             self._upload(sprite)
         landmark_moves = self.flat._steady_eyes(offsets)
         self.vbo.write(self._shape(landmark_moves, ears).astype("f4").tobytes())
         model_rot = FLIP @ rotation @ FLIP
         self.prog["rot"].write(model_rot.astype("f4").T.tobytes())
+        self.moved = self.shift + (0.0, self.lift * breath, 0.0)
+        self.prog["shift"].value = tuple(self.moved)
+        self.mouth_prog["shift"].value = tuple(self.moved)
         r = self.renderer
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)
@@ -426,5 +433,4 @@ class Head3D:
             self.prog["seam"].value = True
             self.seam_vao.render()
         r.ctx.copy_framebuffer(r.resolved, r.msaa)
-        data = r.resolved.read(components=3)
-        return np.frombuffer(data, np.uint8).reshape(self.out_h, self.out_w, 3)[::-1]
+        return r.read()
