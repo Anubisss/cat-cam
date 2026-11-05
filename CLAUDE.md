@@ -28,6 +28,11 @@ an image and check them, as the tests only catch holes and gross errors.
 - `catcam/cat_face.py`: eyelids. `face_motion.py`: expression transfer.
   `head_pose.py`: head rotation and the One Euro filter.
 - `catcam/paws.py`, `paw_photos.py`: paws. `tail.py`: the tail.
+- `catcam/head3d.py`: experimental real 3D heads, shown as an extra "<Name> 3D"
+  cat when `assets/cats/<Name>/head3d.npz` exists. It borrows the 2D cat's
+  expressions, mouth, blinks and ears. `head3d_import.py` turns a generated
+  `.glb` head (e.g. from TRELLIS.2) into those assets:
+  `uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name>`.
 - `catcam/prepare.py`, `landmark_fit.py`: turn portraits into cat assets
   (only needed when adding or changing a cat).
 - `assets/cats/<Name>/`: prepared cats, used at runtime. `all_cats/`: the

@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import mediapipe as mp
@@ -31,6 +31,7 @@ from catcam.ears import EarMotion
 from catcam.face_motion import ExpressionTransfer
 from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
+from catcam.head3d import Head3D, has_head
 from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
 from catcam.paths import FACE_MODEL, HAND_MODEL, LOG_FILE
 from catcam.paws import Paws, paw_set, paw_style
@@ -77,7 +78,7 @@ class Cat:
     name: str
     points: np.ndarray
     eyelids: CatFace
-    mesh: CatMesh
+    mesh: CatMesh | Head3D
     paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
     tail: TailSkin | None
     sprite: np.ndarray
@@ -96,7 +97,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
     cats = []
     for name in names:
         a = cat_assets.load(name)
-        cats.append(Cat(
+        cat = Cat(
             name=name,
             points=a.points,
             eyelids=CatFace(a.sprite, a.points[:, :2]),
@@ -105,7 +106,11 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             tail=tail_skin(a.paws),
             sprite=a.sprite,
             background=a.background,
-        ))
+        )
+        cats.append(cat)
+        if has_head(name):  # a 3D version too, as its own entry to compare with
+            head = Head3D(renderer, name, cat.mesh, a.sprite, a.points, a.background)
+            cats.append(replace(cat, name=f"{name} 3D", mesh=head))
     return cats
 
 
