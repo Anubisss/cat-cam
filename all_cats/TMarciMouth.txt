@@ -1,0 +1,13 @@
+# Where TMarci's lips meet, corner to corner (portrait px): a dog's smile,
+# which the face fit (made for cats) puts on the nose instead.
+429, 693
+437, 742
+460, 781
+505, 801
+571, 807
+644, 807
+719, 807
+785, 801
+828, 781
+855, 742
+866, 693

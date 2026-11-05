@@ -9,12 +9,16 @@ def meshes(real_cats):
     from catcam.cat_mesh import CatMesh, Renderer
 
     renderer = Renderer((640, 360))
-    return [(cat, CatMesh(renderer, cat.sprite, cat.points, (0, 0, 0))) for cat in real_cats]
+    return [(cat, CatMesh(renderer, cat.sprite, cat.points, (0, 0, 0), snap=not cat.mouth_set))
+            for cat in real_cats]
 
 
 @pytest.mark.gl
 def test_every_cat_has_two_ears_above_its_face(meshes):
     for cat, mesh in meshes:
+        if cat.name == "TMarci":  # a golden retriever: floppy ears, nothing to perk or flatten
+            assert not mesh.ears
+            continue
         assert [ear.side for ear in mesh.ears] == [-1, 1], cat.name
         for ear in mesh.ears:
             assert not ear.weights[:478].any(), cat.name  # the face never moves with the ears
@@ -26,6 +30,8 @@ def test_every_cat_has_two_ears_above_its_face(meshes):
 @pytest.mark.gl
 def test_flattened_ears_tip_outward_and_perked_ones_inward(meshes):
     for cat, mesh in meshes:
+        if not mesh.ears:  # TMarci, see above
+            continue
         for ear in mesh.ears:
             tip = ear.weights.argmax()
             flat = bend(mesh.rest, mesh.ears, (0.3, 0.3))
