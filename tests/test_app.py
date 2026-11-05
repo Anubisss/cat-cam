@@ -2,7 +2,18 @@ import cv2
 import numpy as np
 import pytest
 
-from catcam.app import BLINK_RANGE, ENTER, ESC, Controls, Mouse, blinks, preview, ramp, window_closed
+from catcam.app import (
+    BLINK_RANGE,
+    ENTER,
+    ESC,
+    TAIL_BOX,
+    Controls,
+    Mouse,
+    blinks,
+    preview,
+    ramp,
+    window_closed,
+)
 from catcam.picker import SIZE, Picker
 
 
@@ -140,3 +151,57 @@ def test_check_draws_every_cat_without_a_camera(capsys):
 
     run(["--check"])
     assert capsys.readouterr().out.strip().endswith("cats")
+
+
+def test_tail_checkbox_toggles_by_click_or_key():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)  # leave the picker
+    assert not controls.tail
+    x, y, size = TAIL_BOX
+    controls.mouse(4, x + size // 2, y + size // 2, 0, None)  # click the box
+    controls.handle(-1, state)
+    assert controls.tail
+    controls.mouse(4, 500, 300, 0, None)  # a click elsewhere
+    controls.handle(-1, state)
+    assert controls.tail
+    controls.handle(ord("t"), state)
+    assert not controls.tail
+
+
+def test_clicks_in_the_picker_do_not_toggle_the_tail():
+    controls, state = _controls(), _State()
+    x, y, size = TAIL_BOX
+    controls.mouse(4, x + size // 2, y + size // 2, 0, None)
+    controls.handle(-1, state)
+    assert not controls.tail
+
+
+def test_preview_shows_the_tail_checkbox():
+    from types import SimpleNamespace
+
+    out = np.zeros((720, 1280, 3), np.uint8)
+    cat = SimpleNamespace(name="Test")
+    x, y, size = TAIL_BOX
+    box = np.s_[y:y + size, x:x + size]
+    off, on = preview(out, cat, False, tail=False)[box], preview(out, cat, False, tail=True)[box]
+    assert off.any()  # the box is drawn either way
+    assert np.abs(on.astype(int) - off).sum() > 0  # ticked when on
+
+
+@pytest.mark.gl
+def test_tail_replaces_one_paw_only_while_on(real_cats):
+    from catcam.app import FaceState, load_cats, render
+    from catcam.cat_mesh import Renderer
+    from catcam.paws import Paws
+    from catcam.tail import TAIL_HAND, Tail
+
+    cat = next(c for c in load_cats(Renderer((1280, 720))) if c.name == "Dori")
+    paws = Paws(1280)
+    paws.slots = {TAIL_HAND: {"presence": 1.0, "params": np.array([1100, 500, 200, 0, -1, -1, 0])}}
+    tail = Tail((1280, 720))
+    plain = cat.mesh.render(cat.sprite, np.zeros((478, 3)), np.eye(3))
+    corner = np.s_[400:600, 1000:1200]  # where the paw is
+    with_paw = render(cat, FaceState(), paws, tail, tail_on=False)
+    without = render(cat, FaceState(), paws, tail, tail_on=True)
+    assert np.abs(with_paw[corner].astype(int) - plain[corner]).mean() > 10
+    assert np.abs(without[corner].astype(int) - plain[corner]).mean() < 1

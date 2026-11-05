@@ -1,4 +1,4 @@
-"""A tail held up by one of your hands.
+"""A tail lifted by one of your hands.
 
 The tail is a chain of points rooted below the screen, beside the cat's body.
 Your hand only draws its tip along; the rest follows like a real tail: it
@@ -17,7 +17,7 @@ from scipy.interpolate import CubicSpline
 
 from catcam.paws import photo_paw
 
-TAIL_HAND = "Right"  # this hand holds the tail; the other one stays a paw
+TAIL_HAND = "Right"  # this hand moves the tail; the other one stays a paw
 SEGMENTS = 24
 LENGTH = 1.2  # root to tip, in screen heights
 # The root is under the screen, beside the cat's face centre, and as deep as
@@ -85,7 +85,7 @@ class Tail:
         max_bend = np.radians(MAX_BEND[0] + (MAX_BEND[1] - MAX_BEND[0]) * joints)
         self.min_span = 2 * np.cos(max_bend / 2)  # closest a joint's neighbours get, in segments
         sway = np.linspace(0, 1, SEGMENTS + 1)
-        self.sway_weight = sway * (1 - sway)  # the root is held, the tip follows your hand
+        self.sway_weight = sway * (1 - sway)  # the root stays put, the tip follows your hand
 
     def update(self, hand, presence: float, dt: float, cat_face_center: np.ndarray, cat_face_width: float):
         """hand: (x, y, ...) where your tail hand is on screen (see Paws), or None;
@@ -147,7 +147,7 @@ class Tail:
 
 
 def _constrain(p: np.ndarray, segment: float, min_span: list[float]):
-    """Moves the points of p (in place, the first two held) until every
+    """Moves the points of p (in place, the first two fixed) until every
     segment is `segment` long and points two apart are at least min_span[i]
     apart, so no joint bends further than the tail can."""
     xs, ys = p[:, 0].tolist(), p[:, 1].tolist()

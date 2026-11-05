@@ -32,7 +32,8 @@ USE
   listed, restart Zoom while Cat Cam is open.
 - Keep a relaxed face for the first second. If the cat looks grumpy or
   turned while you are relaxed, press N.
-- Raise your hands into view for paws.
+- Raise your hands into view for paws. Tick "Tail" in the top left corner
+  of the Cat Cam window (or press T) and your right hand lifts a tail.
 - In the Cat Cam window: C picks another cat, Q quits.
 
 TROUBLE?

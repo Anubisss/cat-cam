@@ -2,7 +2,7 @@
 
 all_cats/<Name>PawsFront.png shows the cat's front legs from the front (the top
 of the paws, toes down) and <Name>PawsBack.png the soles (toes up). Each photo
-holds the left paw left of a purple dividing line and the right paw right of it.
+shows the left paw left of a purple dividing line and the right paw right of it.
 They become assets/cats/<Name>/paw_<view>_<hand>.png: cut out, toes up, the
 arm leaving at the bottom, scaled to a fixed paw width.
 """

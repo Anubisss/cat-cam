@@ -92,9 +92,10 @@ at the viewer". If the cat looks grumpy or turned while you are relaxed, press
 
 Raise your hands into the camera's view for paws. Turn a hand around to
 show the other side of the paw, and make a fist to curl its toes in.
-David has a tail instead of a second paw: your right hand holds up its tip,
-and the rest of the tail rises from below, trails behind, curls and swishes
-on its own.
+Tick **Tail** in the top left corner of the window (or press `t`) and your
+right hand lifts the tip of the cat's tail instead of a paw: the rest of
+the tail rises from below, trails behind, curls and swishes on its own.
+Untick it to get the paw back.
 
 ### Keys (in the Cat Cam window)
 
@@ -103,6 +104,7 @@ on its own.
 | `1` to `7` | switch cat, at any time                                   |
 | `c`        | open the cat picker (the call keeps showing your cat)     |
 | `Esc`      | close the picker                                          |
+| `t`        | tail on/off (same as the Tail checkbox)                   |
 | `n`        | "this is my neutral face": recalibrate face and head pose |
 | `q`        | quit (closing the window or Ctrl+C also works)            |
 
@@ -160,8 +162,7 @@ These constants sit at the top of their files:
 | `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
 | `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
-| `TAIL_CATS` | `catcam/app.py` | which cats have a tail |
-| `TAIL_HAND`, `LENGTH`, `SWISH`, `DRAG` | `catcam/tail.py` | which hand holds the tail, how long it is, how much it sways by itself, and how quickly it calms down |
+| `TAIL_HAND`, `LENGTH`, `SWISH`, `DRAG` | `catcam/tail.py` | which hand moves the tail, how long it is, how much it sways by itself, and how quickly it calms down |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
 
 ## How it works

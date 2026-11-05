@@ -40,7 +40,10 @@ from catcam.tail import TAIL_HAND, Tail, TailSkin, tail_skin
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
-TAIL_CATS = ("David",)  # one of your hands is their tail instead of a paw
+# The "Tail" checkbox in the preview's top left corner (x, y, size in preview
+# px); while it is ticked one of your hands lifts a tail instead of a paw.
+TAIL_BOX = (16, 14, 22)
+TAIL_LABEL = "Tail (t)"
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.7  # 0..1, higher = snappier; kept snappy so blinks show
@@ -98,7 +101,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             eyelids=CatFace(a.sprite, a.points[:, :2]),
             mesh=CatMesh(renderer, a.sprite, a.points, a.background),
             paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
-            tail=tail_skin(a.paws) if name in TAIL_CATS else None,
+            tail=tail_skin(a.paws),
             sprite=a.sprite,
             background=a.background,
         ))
@@ -179,23 +182,49 @@ class FaceState:
         self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
 
 
-def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail) -> np.ndarray:
+def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_on: bool) -> np.ndarray:
+    """tail_on: the tail hand moves the tail (still sinking out of view for a
+    moment after it is switched off) instead of a paw."""
     sprite = cat.eyelids.render(blink=tuple(state.blink))
     offsets = state.transfer.to_cat(state.offsets, cat.points)
     frame = cat.mesh.render(sprite, offsets, to_matrix(state.head), state.ears)
     if cat.tail is None:
         return paws.draw(frame, cat.paw)
-    return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=(TAIL_HAND,))
+    hidden = (TAIL_HAND,) if tail_on else ()
+    return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=hidden)
 
 
-def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None) -> np.ndarray:
-    """Mirrored like a mirror, with hints that never reach the call."""
+def draw_tail_box(view: np.ndarray, checked: bool):
+    """The tail checkbox, drawn into the preview (in place)."""
+    x, y, size = TAIL_BOX
+    label_w = cv2.getTextSize(TAIL_LABEL, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
+    shade = view[y - 6:y + size + 6, x - 6:x + size + label_w + 18]
+    shade[:] = (shade * 0.45).astype(np.uint8)
+    cv2.rectangle(view, (x, y), (x + size, y + size), (240, 240, 240), 2, cv2.LINE_AA)
+    if checked:
+        tick = np.array([(x + 5, y + 11), (x + 9, y + 16), (x + 17, y + 6)], np.int32)
+        cv2.polylines(view, [tick], False, (64, 170, 255), 3, cv2.LINE_AA)
+    cv2.putText(view, TAIL_LABEL, (x + size + 10, y + size - 5), cv2.FONT_HERSHEY_DUPLEX, 0.55,
+                (240, 240, 240), 1, cv2.LINE_AA)
+
+
+def on_tail_box(x: int, y: int) -> bool:
+    """Whether a click at preview px (x, y) hits the tail checkbox or its label."""
+    bx, by, size = TAIL_BOX
+    label_w = cv2.getTextSize(TAIL_LABEL, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
+    return bx - 6 <= x <= bx + size + label_w + 12 and by - 6 <= y <= by + size + 6
+
+
+def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None,
+            tail: bool = False) -> np.ndarray:
+    """Mirrored like a mirror, with hints and the tail checkbox, none of which reach the call."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
     w, h = PREVIEW_SIZE
     bar = view[h - 34:]
     bar[:] = (bar * 0.45).astype(np.uint8)
-    put_text(view, f"{cat.name}   -   c: change cat   n: reset neutral face   q: quit",
+    put_text(view, f"{cat.name}   -   c: change cat   t: tail   n: reset neutral face   q: quit",
              w / 2, h - 12, 0.5, (240, 240, 240))
+    draw_tail_box(view, tail)
     if looking:
         put_text(view, "Looking for your face...", w / 2, 36, 0.8, (255, 255, 255), 2)
     if notice:
@@ -254,21 +283,30 @@ def window_closed() -> bool:
 
 
 class Mouse:
-    """Collects the picker's mouse events from OpenCV's callback."""
+    """Collects mouse events from OpenCV's callback: clicks on the picker's
+    cards, and where the last click was (for the preview's checkbox)."""
 
     def __init__(self, picker: Picker):
         self.picker = picker
         self.clicked = None
+        self.position = None
 
     def __call__(self, event, x, y, flags, param):
         if event == cv2.EVENT_MOUSEMOVE:
             self.picker.hover = self.picker.hit(x, y)
         elif event == cv2.EVENT_LBUTTONUP:
             self.clicked = self.picker.hit(x, y)
+            self.position = (x, y)
 
     def take_click(self) -> int | None:
-        clicked, self.clicked = self.clicked, None
+        """The card clicked since the last take, if any."""
+        clicked, self.clicked, self.position = self.clicked, None, None
         return clicked
+
+    def take_position(self) -> tuple[int, int] | None:
+        """Where the last click since the last take was, if any."""
+        position, self.clicked, self.position = self.position, None, None
+        return position
 
 
 def parse_args(argv=None):
@@ -286,6 +324,7 @@ class Controls:
     def __init__(self, picker: Picker, mouse: Mouse):
         self.picker, self.mouse = picker, mouse
         self.current, self.picking, self.picked_once = 0, True, False
+        self.tail = False  # the tail checkbox
         self.quit = False
 
     def handle(self, key: int, state: FaceState):
@@ -302,7 +341,9 @@ class Controls:
             if key == ESC and self.picked_once:
                 self.picking = False
         else:
-            self.mouse.take_click()  # clicks on the preview don't count later
+            click = self.mouse.take_position()
+            if key == ord("t") or (click is not None and on_tail_box(*click)):
+                self.tail = not self.tail
             if key == ord("c"):
                 self.picking = True
                 self.picker.hover = None
@@ -346,17 +387,18 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = cats[controls.current]
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
-        hand = paws.slots.get(TAIL_HAND, {}) if cat.tail is not None else {}
+        hand = paws.slots.get(TAIL_HAND, {}) if controls.tail and cat.tail is not None else {}
         tail.update(hand.get("params"), hand.get("presence", 0.0), dt, *cat.mesh.face_on_screen())
 
         special = effects.update(now, cat.name)
-        out = special if special is not None else render(cat, state, paws, tail)
+        out = special if special is not None else render(cat, state, paws, tail, controls.tail)
         vcam.send(out)
         if controls.picking:
             cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None))
         else:
             looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
-            cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None))
+            cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None,
+                                       tail=controls.tail))
         key = cv2.waitKey(1) & 0xFF
         if effects.needs_permission(key, now):
             notice_until = now + 10
@@ -368,7 +410,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
 def check(cats: list[Cat]):
     """Draws every cat once at rest, with paws, as a quick test of the install."""
     for cat in cats:
-        out = render(cat, FaceState(), Paws(OUT_W))
+        out = render(cat, FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), tail_on=True)
         if out.shape != (OUT_H, OUT_W, 3) or not out.any():
             sys.exit(f"Drawing {cat.name} failed.")
     load_effects()  # its data file must load too
