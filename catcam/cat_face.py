@@ -112,6 +112,8 @@ def snap_eyes(bgr: np.ndarray, landmarks: np.ndarray):
             contour[[0, -1], 1] += (top + bottom) / 2  # corners are shared by both lids
             t = (contour[:, 0] - left) / max(right - left, 1e-6)
             contour[:, 0] += (1 - t) * -grow_left + t * grow_right
+        # A squint is barely open: shifting its lids must not cross them.
+        lower[:, 1] = np.maximum(lower[:, 1], _sample(upper, lower[:, 0]))
     return eyes
 
 

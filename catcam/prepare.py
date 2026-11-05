@@ -168,6 +168,10 @@ def main():
             points[:, :2] = place_mouth(points, np.loadtxt(mouth, delimiter=",", ndmin=2),
                                         np.ptp(points[:, 0]))[:, :2]
             print(f"  lips placed along {mouth.name}")
+        # The fit can put a chin past a head cut off at the picture's edge.
+        h, w = images[name].shape[:2]
+        points[:, 0] = np.clip(points[:, 0], 0, w - 1)
+        points[:, 1] = np.clip(points[:, 1], 0, h - 1)
         save(name, cutouts[name], points, background_color(images[name]), mouth.is_file())
         print(f"  saved {ASSETS / name}")
     if failed:

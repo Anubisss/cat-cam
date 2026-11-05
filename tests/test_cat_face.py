@@ -1,6 +1,6 @@
 import numpy as np
 
-from catcam.cat_face import EYES, CatFace
+from catcam.cat_face import EYES, CatFace, _sample
 
 
 def test_open_eyes_leave_the_sprite_alone(real_cats):
@@ -21,10 +21,14 @@ def test_blink_only_touches_the_eyes(real_cats):
         height = np.ptp(eyes[:, 1])
         assert changed[:, 0].min() > eyes[:, 1].min() - 4 * height, cat.name
         assert changed[:, 0].max() < eyes[:, 1].max() + 2 * height, cat.name
-        # Closing the eye covers the eye: its middle now shows lid, not eye.
-        for upper, lower in EYES:
-            mid = ((cat.points[upper[4], :2] + cat.points[lower[4], :2]) / 2).astype(int)
-            assert (closed[mid[1], mid[0]] != cat.sprite[mid[1], mid[0]]).any(), cat.name
+        # Closing the eye covers the eye: round its middle it now shows lid, not eye
+        # (a black cat's lid can match the pixel right in the middle of a squint).
+        for upper, lower in face.eyes:
+            x = upper[:, 0].mean()
+            y = (_sample(upper, [x])[0] + _sample(lower, [x])[0]) / 2
+            x, y = int(x), int(y)
+            window = np.s_[y - 2:y + 3, x - 2:x + 3]
+            assert (closed[window] != cat.sprite[window]).any(), cat.name
 
 
 def test_eye_outside_the_sprite_is_ignored(real_cats):
@@ -36,7 +40,7 @@ def test_eye_outside_the_sprite_is_ignored(real_cats):
 
 
 def test_snapped_eyes_stay_near_the_landmarks(real_cats):
-    from catcam.cat_face import MAX_CORNER_SHIFT, MAX_LID_SHIFT, snap_eyes
+    from catcam.cat_face import MAX_CORNER_SHIFT, MAX_LID_SHIFT, _sample, snap_eyes
 
     for cat in real_cats:
         snapped = snap_eyes(cat.sprite[..., :3], cat.points[:, :2])
@@ -45,4 +49,5 @@ def test_snapped_eyes_stay_near_the_landmarks(real_cats):
             limit = (max(MAX_LID_SHIFT, MAX_CORNER_SHIFT) + 0.01) * width
             assert np.abs(upper - cat.points[up_idx, :2]).max() <= limit, cat.name
             assert np.abs(lower - cat.points[lo_idx, :2]).max() <= limit, cat.name
-            assert (lower[1:-1, 1] >= upper[1:-1, 1]).all(), cat.name  # still an open eye
+            # Still an open eye (or a squint, at least not shut past itself).
+            assert (lower[1:-1, 1] >= _sample(upper, lower[1:-1, 0]) - 1e-6).all(), cat.name

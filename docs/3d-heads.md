@@ -121,7 +121,8 @@ has the exact versions and fixes the heads were made with.
 
 ## Heads from Meshy
 
-Woofgang's head was made with Meshy's Image to 3D instead of TRELLIS:
+Woofgang's head and the seven cats' were made with Meshy's Image to 3D
+instead of TRELLIS:
 
 1. **Settings:**
    - Multi-view on, with the front portrait as the main view and the
@@ -130,9 +131,14 @@ Woofgang's head was made with Meshy's Image to 3D instead of TRELLIS:
    - Meshy 7.1 Flagship, High Detail, Ultra 2K.
    - Texture on, with the Meshy 7 texture model at 2K and no PBR maps.
    - Pose off, Image Enhancement off, licence Private.
-2. **Download** it as GLB. Meshy's heads have millions of triangles, far
-   too many to move every frame. Reduce a copy to 300,000 (your download
-   stays as it is):
+2. **Remesh it in Meshy** to 300,000 triangles: Target Polycount Fixed,
+   Custom 300K, Topology Triangle. Meshy's heads have millions of
+   triangles, far too many to move every frame, and Meshy bakes the texture
+   onto the remeshed head properly. Download that as GLB.
+
+   Or reduce a downloaded copy yourself (the download stays as it is). This
+   works on smooth heads; on very furry ones the texture's many small pieces
+   stop it well short of 300,000, and Meshy's remesh is the way:
 
    ```sh
    uv run --no-project --with pymeshlab --with trimesh --with pillow python - <head.glb> <small.glb> <<'PY'
@@ -153,9 +159,18 @@ Woofgang's head was made with Meshy's Image to 3D instead of TRELLIS:
    small.export(sys.argv[2])
    PY
    ```
-3. **Import** it as above. Meshy's heads come with a real mouth, closed, with
+3. **No portrait?** A cat made from pictures that aren't a straight,
+   closed-mouth portrait gets one from its head: render it face-on, unlit,
+   on the usual backdrop, then prepare the cat from it as any other
+   (README, "Add your own cat"):
+
+   ```sh
+   /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+       --python tools/head_portrait.py -- <small.glb> all_cats/<Name>.png
+   ```
+4. **Import** it as above. Meshy's heads come with a real mouth, closed, with
    a slit between the lips. Add `--own-mouth` to keep it instead of adding
-   one (see below):
+   one (see below), and `--animal dog` for a dog:
 
    ```sh
    uv run --with trimesh python -m catcam.head3d_import <small.glb> <Name> --own-mouth
@@ -208,14 +223,20 @@ your mouth, with the same teeth, gums and tongue inside. Woofgang's is like
 that:
 - **Finding the jaw:** the jaw spreads over the model's surface from its lower
   lip and chin, the rest of the face from its upper lip and nose, and the jaw
-  ends where the two meet. Going into a fold (a valley in the surface) costs
-  extra, so they meet in the deepest fold between them: the slit between the
-  lips, which runs on along the sides of the jaw under a dog's hanging lips.
-  Bumps of fur and pores don't count as folds. The jaw also takes in the skin
-  under the chin, less and less of it further from the lips.
-- **Cutting it free:** the faces across that line are split along it, and
-  every point on it is made twice, once for each side. Nothing stretches
-  between the lips as they part; the head's dark inside shows instead.
+  ends where the two meet. Both also start right by the lips, a little below
+  and above the line where they meet, and going into a fold (a valley in the
+  surface) costs extra, so they meet in the slit between the lips rather
+  than in a deeper fold nearby (a cat's chin, a grin's lower lip). Bumps of
+  fur and pores don't count as folds; loose tufts of fur go with the surface
+  nearest them. The jaw also takes in the skin under the chin, less and less
+  of it further from the lips.
+- **Cutting it free:** along the lips, the faces across that line are split
+  along it, and every point on it is made twice, once for each side, so the
+  lips part cleanly. Further along the jaw's edge (down the sides of the
+  chin, under it) the skin stretches instead, as a real one does.
+- **Its inside:** between the parted lips the app draws whatever the model
+  has there (never seen, so its texture is guesswork) as the dark inside of
+  the mouth, and so are the head's back faces just round it.
 - **The mouth inside** is sized and placed by the slit: the import saves where
   the lips meet in the middle and how wide the slit is. Teeth or tongue that
   would poke out through the skin anywhere are not drawn there.
@@ -226,8 +247,12 @@ that:
 The import prints how many vertices move with the jaw. If the jaw takes a
 piece of the upper lip, or leaves part of the lower lip behind, the knobs are
 at the top of `catcam/head3d_import.py`: `JAW_SEEDS` and `FACE_SEEDS` (the
-face points each side starts from), `JAW_FOLD` (how strongly folds divide
-them) and `JAW_REACH` (how far down the throat the jaw's pull fades out).
+face points each side starts from), `LIP_SEED_GAP` (how close to the lips
+they also start), `JAW_FOLD` (how strongly folds divide them), `CUT_REACH`
+(how far from the lips the jaw is cut rather than stretched) and
+`JAW_REACH` (how far down the throat the jaw's pull fades out). If the
+mouth is in the wrong place altogether, the face fit is off: place the lips
+by hand (below), as for Woofgang and Pleadwell.
 
 **The mouth line** is where the lips meet in the portrait, found when the cat
 is prepared. The fit is made for cats; on other faces it can land elsewhere.
@@ -236,7 +261,8 @@ smile whose corners are its highest points. Then write the line yourself in
 `all_cats/<Name>Mouth.txt`: one `x, y` per line, in portrait pixels, from
 one mouth corner to the other. Then prepare the cat again with
 `--force`, and import its head again. `all_cats/WoofgangMouth.txt` is an
-example.
+example. If the fit put the whole lower face too low (the nose below your
+line), the face below the eyes is lifted to it first.
 
 **Everything else** comes from the photo cat:
 - **Expressions:** the head is tied to the photo cat's face points, so every

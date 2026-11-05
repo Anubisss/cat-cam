@@ -77,7 +77,9 @@ void main() {
     shade = clamp(1.0 + strength * (after - before), shade_range.x, shade_range.y);
 }
 """
-# Whether screen px p is inside the opening between the lips (a polygon, crossing test).
+# Whether screen px p is inside the opening between the lips (a polygon of OPENING
+# points, crossing test).
+OPENING = 22
 IN_OPENING = """
 uniform vec2 opening[22];  // the gap between the lips on screen (px), around its edge
 bool in_opening(vec2 p) {
@@ -106,8 +108,11 @@ out vec4 color;
 void main() {
     vec2 p = gl_FragCoord.xy;
     bool near_mouth = all(greaterThan(p, mouth_box.xy)) && all(lessThan(p, mouth_box.zw));
+    // Between its cut lips everything of the head is its inside (whatever the model has
+    // there was never seen); round them, so are back faces with no outside behind them.
     // Elsewhere a back face is the back of a tuft of fur, drawn like the rest.
-    if (own_mouth && !gl_FrontFacing && near_mouth && texelFetch(skin, ivec2(p), 0).r == 1.0) {
+    bool inner = in_opening(p) || !gl_FrontFacing && near_mouth && texelFetch(skin, ivec2(p), 0).r == 1.0;
+    if (own_mouth && inner) {
         // Darker where the inside turns away from the camera, so it reads as a hollow.
         color = vec4(inside * (0.35 + 0.65 * abs(normalize(normal).z)), 1.0);
         return;
@@ -317,6 +322,7 @@ class Head3D:
         attributes = [(self.vbo, "3f", "in_pos"),
                       (ctx.buffer(mesh["normals"].astype("f4").tobytes()), "3f", "in_normal"),
                       (ctx.buffer(mesh["uv"].astype("f4").tobytes()), "2f", "in_uv")]
+        self.lip_cut = mesh["lip_cut"] if "lip_cut" in mesh.files else None
         if self.jaw_weight is None:
             seam = lip_seam(mesh["faces"], self.photo_px, points, face_width, on_face)
         else:  # the jaw is cut free already (see catcam.head3d_import.cut_jaw)
@@ -458,7 +464,30 @@ class Head3D:
         grow = MOUTH_BOX * (hi - lo)
         return (*(lo - grow), *(hi + grow))
 
-    def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray):
+    def _lip_gap(self, shaped: np.ndarray, model_rot: np.ndarray) -> list:
+        """The opening between a head's own cut lips on screen (gl_FragCoord px): the
+        face's side of the cut left to right, then the jaw's back, each smoothed into
+        half of the opening's points. Closed, the two sides lie on each other."""
+        pts = shaped[self.lip_cut.ravel()]
+        clip = np.column_stack([pts @ model_rot.T + self.moved, np.ones(len(pts))]) @ self.proj.T
+        screen = (clip[:, :2] / clip[:, 3:] + 1) / 2 * (self.out_w, self.out_h)
+        upper, lower = screen[0::2], screen[1::2]
+        half = OPENING // 2
+        bins = np.linspace(upper[:, 0].min(), upper[:, 0].max(), half + 1)
+        centres = (bins[1:] + bins[:-1]) / 2
+
+        def edge(side):
+            which = np.clip(np.digitize(side[:, 0], bins) - 1, 0, half - 1)
+            count = np.bincount(which, minlength=half)
+            mean = np.bincount(which, side[:, 1], half) / np.maximum(count, 1)
+            return np.interp(centres, centres[count > 0], mean[count > 0])
+
+        top, bottom = edge(upper), edge(lower)
+        return list(zip(centres, top)) + list(zip(centres[::-1], bottom[::-1]))
+
+    def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray, shaped: np.ndarray):
+        if self.own_mouth and self.lip_cut is not None and len(self.lip_cut):
+            self.prog["opening"].value = self._lip_gap(shaped, model_rot)
         if not self.own_mouth:
             # The gap between the lips on screen: upper lip left to right, lower lip back.
             ring = UPPER_INNER_LIP + LOWER_INNER_LIP[::-1]
@@ -506,7 +535,7 @@ class Head3D:
             self.prog["mouth_box"].value = self._mouth_box(shaped[self.on_jaw], model_rot)
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)
-        self._draw_mouth(landmark_moves, model_rot)
+        self._draw_mouth(landmark_moves, model_rot, shaped)
         self.prog["seam"].value = False
         self.vao.render()
         if self.seam_vao is not None:
