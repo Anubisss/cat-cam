@@ -266,11 +266,12 @@ class Paws:
         swapped = distance("Right", a) + distance("Left", b)
         return [("Left", a), ("Right", b)] if straight <= swapped else [("Right", a), ("Left", b)]
 
-    def draw(self, frame: np.ndarray, paws) -> np.ndarray:
-        """paws: a PawSprite for every hand, or {(view, hand): PawSprite} (see paw_set)."""
+    def draw(self, frame: np.ndarray, paws, hidden=()) -> np.ndarray:
+        """paws: a PawSprite for every hand, or {(view, hand): PawSprite} (see
+        paw_set); hidden: hands ("Left", "Right") that get no paw."""
         out = frame.copy()
         for name, slot in self.slots.items():
-            if slot["presence"] < 0.02 or "params" not in slot:
+            if slot["presence"] < 0.02 or "params" not in slot or name in hidden:
                 continue
             x, y, size, ux, uy, toward, closed = slot["params"]
             norm = np.hypot(ux, uy) + 1e-6
