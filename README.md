@@ -3,7 +3,7 @@
 Be Woofgang, a golden retriever, in your Zoom calls. He turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile, open
 mouth) and your hands become his paws: the top of the paw when you show the
-back of your hand, the toe beans when you show your palm. Tick **3D head** and
+back of your hand, the toe beans when you show your palm. Turn on **3D head** and
 he becomes a real 3D head whose jaw drops when you open your mouth, and the
 side of his head that turns away from the light falls into shadow.
 
@@ -92,15 +92,15 @@ at the viewer". If the cat looks grumpy or turned while you are relaxed, press
 
 Raise your hands into the camera's view for paws. Turn a hand around to
 show the other side of the paw, and make a fist to curl its toes in.
-Tick **Tail** in the top left corner of the window (or press `t`) for the
+Turn on **Tail** in the top left corner of the window (or press `t`) for the
 cat's tail: while only one of your hands is in view, it lifts the tip of
 the tail instead of being a paw, and the rest of the tail rises from below,
 trails behind, curls and swishes on its own. Show both hands and they are
-two paws again. Untick it for paws only.
+two paws again. Turn it off for paws only.
 
 Cats with a 3D head (see [docs/3d-heads.md](docs/3d-heads.md)) also get a
-**3D head** checkbox under it (or press `d`): the photo becomes a real 3D
-head that turns properly, with teeth and a tongue when the mouth opens.
+**3D head** switch next to it (or press `d`): the photo becomes a real 3D
+head that turns properly, and whose mouth opens with yours.
 
 ### Keys (in the Cat Cam window)
 
@@ -109,7 +109,7 @@ head that turns properly, with teeth and a tongue when the mouth opens.
 | `1`, `2`, ... | switch cat, when there are several                     |
 | `c`        | open the cat picker (the call keeps showing your cat)     |
 | `Esc`      | close the picker                                          |
-| `t`        | tail on/off (same as the Tail checkbox)                   |
+| `t`        | tail on/off (same as the Tail switch)                     |
 | `d`        | 3D head on/off, for cats that have one                    |
 | `n`        | "this is my neutral face": recalibrate face and head pose |
 | `q`        | quit (closing the window or Ctrl+C also works)            |
@@ -232,7 +232,8 @@ catcam/
   paw_photos.py    turns paw photos into paw sprites (used by prepare)
   prepare.py       turns all_cats/*.png into assets/cats/*
   landmark_fit.py  finds a cat's face points (used by prepare)
-  head3d.py        3D heads: the 3D head checkbox
+  head3d.py        3D heads, behind the 3D head switch
+  glass.py         the window's glass panels, switches and text
   mouth3d.py       a 3D head's teeth, tongue and jaw
   head3d_import.py turns a generated .glb head into a cat's 3D head
 all_cats/          source portraits

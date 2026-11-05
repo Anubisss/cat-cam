@@ -1,7 +1,7 @@
 # Making a 3D head for a cat
 
 Each cat can have a real 3D head next to its photo head (the **3D head**
-checkbox in the app, or `d`). It turns properly, and when the mouth opens there
+switch in the app, or `d`). It turns properly, and when the mouth opens there
 are teeth, a tongue and a jaw inside. The head is generated from the cat's
 portrait by [TRELLIS.2](https://github.com/microsoft/TRELLIS.2), an
 image-to-3D model, running locally on an Apple Silicon Mac. This page is the

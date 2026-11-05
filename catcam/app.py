@@ -25,6 +25,7 @@ import pyvirtualcam
 from mediapipe.tasks.python import BaseOptions, vision
 
 from catcam import cats as cat_assets
+from catcam import glass
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.ears import EarMotion
@@ -36,18 +37,19 @@ from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_m
 from catcam.paths import FACE_MODEL, HAND_MODEL, LOG_FILE
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
-from catcam.picker import Picker, put_text
+from catcam.picker import Picker
 from catcam.tail import Tail, TailHand, TailSkin, tail_skin
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
-# Checkboxes in the preview's top left corner (x, y, size in preview px). While
-# "Tail" is ticked, a hand alone in view lifts a tail instead of being a paw (two
-# hands are two paws); "3D head" shows the cat's 3D head, for cats that have one.
-TAIL_BOX = (16, 14, 22)
-TAIL_LABEL = "Tail (t)"
-HEAD3D_BOX = (16, 52, 22)
-HEAD3D_LABEL = "3D head (d)"
+# Switches in a glass pill in the preview's top left corner: (name, label, key).
+# While "Tail" is on, a hand alone in view lifts a tail instead of being a paw
+# (two hands are two paws); "3D head" shows the cat's 3D head, if it has one.
+TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"))
+PILL = (16, 16, 44)  # the pill's x, y and height (preview px)
+CAPSULE = (44, 16)  # the bottom capsule's height and its gap to the window's edge
+# Keys shown in the bottom capsule (the switches show their own).
+KEY_HINTS = (("c", "Change cat"), ("n", "Neutral face"), ("q", "Quit"))
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.5  # 0..1, higher = snappier; soften small tracking changes
@@ -116,7 +118,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
 
 
 def shown(cat: Cat, head3d: bool) -> Cat:
-    """The cat as drawn: with its 3D head while that checkbox is ticked, if it has one."""
+    """The cat as drawn: with its 3D head while that switch is on, if it has one."""
     return replace(cat, mesh=cat.head3d) if head3d and cat.head3d is not None else cat
 
 
@@ -206,48 +208,86 @@ def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | 
     return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=hidden)
 
 
-def draw_checkbox(view: np.ndarray, box: tuple, label: str, checked: bool):
-    """A checkbox with its label, drawn into the preview (in place)."""
-    x, y, size = box
-    label_w = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
-    shade = view[y - 6:y + size + 6, x - 6:x + size + label_w + 18]
-    shade[:] = (shade * 0.45).astype(np.uint8)
-    cv2.rectangle(view, (x, y), (x + size, y + size), (240, 240, 240), 2, cv2.LINE_AA)
-    if checked:
-        tick = np.array([(x + 5, y + 11), (x + 9, y + 16), (x + 17, y + 6)], np.int32)
-        cv2.polylines(view, [tick], False, (64, 170, 255), 3, cv2.LINE_AA)
-    cv2.putText(view, label, (x + size + 10, y + size - 5), cv2.FONT_HERSHEY_DUPLEX, 0.55,
-                (240, 240, 240), 1, cv2.LINE_AA)
+def toggle_rects(head3d: bool) -> dict[str, tuple[int, int, int, int]]:
+    """Each switch's area in the pill (x, y, w, h, preview px); head3d: whether the
+    cat has a 3D head, else its switch is left out."""
+    x, y, h = PILL
+    rects, x = {}, x + 6
+    for name, label, _ in TOGGLES:
+        if name == "head3d" and not head3d:
+            continue
+        w = 10 + glass.SWITCH[0] + 10 + glass.text_width(label, 15, 500) + 10 + 20 + 10
+        rects[name] = (x, y, w, h)
+        x += w
+    return rects
 
 
-def on_checkbox(x: int, y: int, box: tuple, label: str) -> bool:
-    """Whether a click at preview px (x, y) hits the checkbox or its label."""
-    bx, by, size = box
-    label_w = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
-    return bx - 6 <= x <= bx + size + label_w + 12 and by - 6 <= y <= by + size + 6
+def toggle_at(x: int, y: int, head3d: bool) -> str | None:
+    """The switch a click at preview px (x, y) lands on, if any."""
+    for name, (rx, ry, w, h) in toggle_rects(head3d).items():
+        if rx <= x < rx + w and ry <= y < ry + h:
+            return name
+    return None
+
+
+def _switches(view: np.ndarray, states: dict[str, bool]):
+    rects = toggle_rects("head3d" in states)
+    x, y, h = PILL
+    right = max(rx + w for rx, _, w, _ in rects.values()) + 6
+    glass.panel(view, x, y, right - x, h, h // 2)
+    for name, label, key in TOGGLES:
+        if name not in rects:
+            continue
+        rx, ry, _, _ = rects[name]
+        glass.switch(view, rx + 10, ry + (h - glass.SWITCH[1]) // 2, states[name])
+        tx = rx + 10 + glass.SWITCH[0] + 10
+        glass.text(view, label, tx, ry + h / 2 + 5, 15, weight=500)
+        glass.keycap(view, tx + glass.text_width(label, 15, 500) + 10, ry + (h - 20) // 2, key)
+
+
+def _capsule(view: np.ndarray, name: str):
+    """The bottom capsule: who you are, and the keys."""
+    w, h = PREVIEW_SIZE
+    height, gap = CAPSULE
+    name_w = glass.text_width(name, 17, 600, "rounded")
+    hint_w = [20 + 8 + glass.text_width(label, 14) for _, label in KEY_HINTS]
+    width = 22 + name_w + 18 + 1 + 18 + sum(hint_w) + 18 * (len(KEY_HINTS) - 1) + 22
+    x, y = (w - width) // 2, h - gap - height
+    glass.panel(view, x, y, width, height, height // 2)
+    glass.text(view, name, x + 22, y + height / 2 + 6, 17, weight=600, family="rounded")
+    divider = x + 22 + name_w + 18
+    glass.paint(view, np.ones((height - 20, 1), np.float32), divider, y + 10, glass.WHITE, 0.3)
+    hx = divider + 1 + 18
+    for (key, label), hw in zip(KEY_HINTS, hint_w):
+        glass.keycap(view, hx, y + (height - 20) // 2, key)
+        glass.text(view, label, hx + 28, y + height / 2 + 5, 14, glass.MUTED)
+        hx += hw + 18
+
+
+def _message(view: np.ndarray, lines: list[str], y: int):
+    """A glass panel with lines of text, centred across the window at y."""
+    w, _ = PREVIEW_SIZE
+    width = max(glass.text_width(line, 15, 500) for line in lines) + 48
+    height = 24 + 22 * len(lines)
+    x = (w - width) // 2
+    glass.panel(view, x, y, width, height, min(height // 2, 22))
+    for i, line in enumerate(lines):
+        glass.text(view, line, w / 2, y + 12 + 16 + 22 * i, 15, weight=500, align="center")
 
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None,
             tail: bool = False, head3d: bool | None = None) -> np.ndarray:
-    """Mirrored like a mirror, with hints and the checkboxes, none of which reach the call.
-    head3d: whether the 3D head is on; None leaves its checkbox out (the cat has none)."""
+    """Mirrored like a mirror, with the switches and hints on glass, none of which
+    reach the call. head3d: whether the 3D head is on; None leaves its switch out
+    (the cat has none)."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
-    w, h = PREVIEW_SIZE
-    bar = view[h - 34:]
-    bar[:] = (bar * 0.45).astype(np.uint8)
-    keys = "c: change cat   t: tail   " + ("d: 3D head   " if head3d is not None else "")
-    put_text(view, f"{cat.name}   -   {keys}n: reset neutral face   q: quit",
-             w / 2, h - 12, 0.5, (240, 240, 240))
-    draw_checkbox(view, TAIL_BOX, TAIL_LABEL, tail)
-    if head3d is not None:
-        draw_checkbox(view, HEAD3D_BOX, HEAD3D_LABEL, head3d)
+    states = {"tail": tail} | ({} if head3d is None else {"head3d": head3d})
+    _switches(view, states)
+    _capsule(view, cat.name)
     if looking:
-        put_text(view, "Looking for your face...", w / 2, 36, 0.8, (255, 255, 255), 2)
+        _message(view, ["Looking for your face"], PILL[1])
     if notice:
-        box = view[h // 2 - 50:h // 2 + 22 * len(notice) - 10]
-        box[:] = (box * 0.3).astype(np.uint8)
-        for i, line in enumerate(notice):
-            put_text(view, line, w / 2, h // 2 - 18 + 30 * i, 0.6, (255, 255, 255), 1)
+        _message(view, notice, PREVIEW_SIZE[1] // 2 - 40)
     return view
 
 
@@ -300,7 +340,7 @@ def window_closed() -> bool:
 
 class Mouse:
     """Collects mouse events from OpenCV's callback: clicks on the picker's
-    cards, and where the last click was (for the preview's checkbox)."""
+    cards, and where the last click was (for the preview's switches)."""
 
     def __init__(self, picker: Picker):
         self.picker = picker
@@ -340,8 +380,9 @@ class Controls:
     def __init__(self, picker: Picker, mouse: Mouse):
         self.picker, self.mouse = picker, mouse
         self.current, self.picking, self.picked_once = 0, True, False
-        self.tail = False  # the tail checkbox
-        self.head3d = False  # the 3D head checkbox
+        self.tail = False  # the tail switch
+        self.head3d = False  # the 3D head switch
+        self.has_head3d = True  # whether the current cat has a 3D head (its switch shows)
         self.quit = False
 
     def handle(self, key: int, state: FaceState):
@@ -359,9 +400,10 @@ class Controls:
                 self.picking = False
         else:
             click = self.mouse.take_position()
-            if key == ord("t") or (click is not None and on_checkbox(*click, TAIL_BOX, TAIL_LABEL)):
+            hit = toggle_at(*click, self.has_head3d) if click is not None else None
+            if key == ord("t") or hit == "tail":
                 self.tail = not self.tail
-            if key == ord("d") or (click is not None and on_checkbox(*click, HEAD3D_BOX, HEAD3D_LABEL)):
+            if key == ord("d") or hit == "head3d":
                 self.head3d = not self.head3d
             if key == ord("c"):
                 self.picking = True
@@ -405,6 +447,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now)
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = shown(cats[controls.current], controls.head3d)
+        controls.has_head3d = cat.head3d is not None
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
         tail_hand = tail_hands.update(paws.slots) if controls.tail and cat.tail is not None else None
         hand = paws.slots.get(tail_hand, {}) if tail_hand else {}
@@ -414,7 +457,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         out = special if special is not None else render(cat, state, paws, tail, tail_hand)
         vcam.send(out)
         if controls.picking:
-            cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None))
+            cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None, out))
         else:
             looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
             cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None,
@@ -438,7 +481,7 @@ def check(cats: list[Cat]):
     import sounddevice  # noqa: F401  (imported only when needed, so check here they're there)
     if sys.platform == "darwin":
         import Quartz  # noqa: F401
-    print(f"OK: {len(cats)} cats")
+    print(f"OK: {len(cats)} cat{'' if len(cats) == 1 else 's'}")
 
 
 def alert(message: str):

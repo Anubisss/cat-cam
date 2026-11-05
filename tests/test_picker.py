@@ -44,6 +44,6 @@ def test_draw():
     image = picker.draw(current=4)
     assert image.shape == (SIZE[1], SIZE[0], 3)
     x, y, w, h = picker.cards[2]
-    ring = image[y - 2, x + w // 2]
-    assert ring[2] > 200  # hovered card has the orange ring (BGR)
+    ring = image[y - 3, x + w // 2]
+    assert ring[2] > 200 and ring[0] < 120  # hovered card has the honey ring (BGR)
     assert cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).std() > 10

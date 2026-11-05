@@ -7,6 +7,7 @@ dependencies = [
     "moderngl>=5.13.0",
     "numpy>=2.5.4",
     "opencv-python>=5.0.0.93",
+    "pillow>=13.0.0",
     "pynput>=1.8.2",
     "pyvirtualcam>=0.15.0",
     "scipy>=1.18.1",

@@ -22,14 +22,15 @@ an image and check them, as the tests only catch holes and gross errors.
 ## Layout
 
 - `catcam/app.py`: main loop (webcam, tracking, render, virtual camera), the
-  preview window, keys, the Tail checkbox.
+  preview window, keys, the switches; `glass.py` draws the window's glass
+  panels, switches and text, `picker.py` the cat picker.
 - `catcam/cat_mesh.py`: the 3D head mesh, its shaders and the drawn mouth;
   `mouth_fit.py`, `ears.py` and `lighting.py` feed into it.
 - `catcam/cat_face.py`: eyelids. `face_motion.py`: expression transfer.
   `head_pose.py`: head rotation and the One Euro filter.
 - `catcam/paws.py`, `paw_photos.py`: paws. `tail.py`: the tail.
-- `catcam/head3d.py`: real 3D heads, shown while the "3D head" checkbox is
-  ticked, for cats with an `assets/cats/<Name>/head3d.npz`. It borrows the 2D cat's
+- `catcam/head3d.py`: real 3D heads, shown while the "3D head" switch is
+  on, for cats with an `assets/cats/<Name>/head3d.npz`. It borrows the 2D cat's
   expressions, blinks and ears; `mouth3d.py` builds its teeth, tongue and
   mouth cavity, with a jaw that swings open. `head3d_import.py` turns a generated
   `.glb` head (e.g. from TRELLIS.2) into those assets:

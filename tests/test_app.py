@@ -6,13 +6,12 @@ from catcam.app import (
     BLINK_RANGE,
     ENTER,
     ESC,
-    HEAD3D_BOX,
-    TAIL_BOX,
     Controls,
     Mouse,
     blinks,
     preview,
     ramp,
+    toggle_rects,
     window_closed,
 )
 from catcam.picker import SIZE, Picker
@@ -151,15 +150,19 @@ def test_check_draws_every_cat_without_a_camera(capsys):
     from catcam.app import run
 
     run(["--check"])
-    assert capsys.readouterr().out.strip().endswith("cats")
+    assert capsys.readouterr().out.strip().splitlines()[-1].startswith("OK: ")
 
 
-def test_tail_checkbox_toggles_by_click_or_key():
+def _centre(name, head3d=True):
+    x, y, w, h = toggle_rects(head3d)[name]
+    return x + w // 2, y + h // 2
+
+
+def test_tail_switch_toggles_by_click_or_key():
     controls, state = _controls(), _State()
     controls.handle(ord("1"), state)  # leave the picker
     assert not controls.tail
-    x, y, size = TAIL_BOX
-    controls.mouse(4, x + size // 2, y + size // 2, 0, None)  # click the box
+    controls.mouse(4, *_centre("tail"), 0, None)  # click the switch
     controls.handle(-1, state)
     assert controls.tail
     controls.mouse(4, 500, 300, 0, None)  # a click elsewhere
@@ -169,49 +172,57 @@ def test_tail_checkbox_toggles_by_click_or_key():
     assert not controls.tail
 
 
-def test_head3d_checkbox_toggles_by_click_or_key():
+def test_head3d_switch_toggles_by_click_or_key():
     controls, state = _controls(), _State()
     controls.handle(ord("1"), state)  # leave the picker
     assert not controls.head3d
-    x, y, size = HEAD3D_BOX
-    controls.mouse(4, x + size // 2, y + size // 2, 0, None)  # click the box
+    controls.mouse(4, *_centre("head3d"), 0, None)
     controls.handle(-1, state)
     assert controls.head3d and not controls.tail
     controls.handle(ord("d"), state)
     assert not controls.head3d
 
 
-def test_preview_shows_the_head3d_checkbox_only_for_cats_with_a_3d_head():
+def test_no_head3d_switch_without_a_3d_head():
+    assert set(toggle_rects(False)) == {"tail"}
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    controls.has_head3d = False
+    controls.mouse(4, *_centre("head3d"), 0, None)  # where it would be
+    controls.handle(-1, state)
+    assert not controls.head3d
+
+
+def test_preview_shows_the_head3d_switch_only_for_cats_with_a_3d_head():
     from types import SimpleNamespace
 
     out = np.zeros((720, 1280, 3), np.uint8)
     cat = SimpleNamespace(name="Test")
-    x, y, size = HEAD3D_BOX
-    box = np.s_[y:y + size, x:x + size]
-    assert not preview(out, cat, False)[box].any()
-    off, on = preview(out, cat, False, head3d=False)[box], preview(out, cat, False, head3d=True)[box]
+    x, y, w, h = toggle_rects(True)["head3d"]
+    area = np.s_[y + 8:y + h - 8, x + 10:x + w - 10]  # inside the pill, off its rim
+    assert not preview(out, cat, False)[area].any()
+    off, on = preview(out, cat, False, head3d=False)[area], preview(out, cat, False, head3d=True)[area]
     assert off.any()
     assert np.abs(on.astype(int) - off).sum() > 0
 
 
 def test_clicks_in_the_picker_do_not_toggle_the_tail():
     controls, state = _controls(), _State()
-    x, y, size = TAIL_BOX
-    controls.mouse(4, x + size // 2, y + size // 2, 0, None)
+    controls.mouse(4, *_centre("tail"), 0, None)
     controls.handle(-1, state)
     assert not controls.tail
 
 
-def test_preview_shows_the_tail_checkbox():
+def test_preview_shows_the_tail_switch():
     from types import SimpleNamespace
 
     out = np.zeros((720, 1280, 3), np.uint8)
     cat = SimpleNamespace(name="Test")
-    x, y, size = TAIL_BOX
-    box = np.s_[y:y + size, x:x + size]
-    off, on = preview(out, cat, False, tail=False)[box], preview(out, cat, False, tail=True)[box]
-    assert off.any()  # the box is drawn either way
-    assert np.abs(on.astype(int) - off).sum() > 0  # ticked when on
+    x, y, w, h = toggle_rects(False)["tail"]
+    area = np.s_[y + 8:y + h - 8, x + 10:x + w - 10]
+    off, on = preview(out, cat, False, tail=False)[area], preview(out, cat, False, tail=True)[area]
+    assert off.any()  # the switch is drawn either way
+    assert np.abs(on.astype(int) - off).sum() > 0  # and shows when it's on
 
 
 @pytest.mark.gl
