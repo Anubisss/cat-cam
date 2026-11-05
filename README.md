@@ -1,6 +1,6 @@
 # Cat Cam
 
-Be a cat in your Zoom calls. Pick one of six cats; it turns, nods and tilts
+Be a cat in your Zoom calls. Pick one of seven cats; it turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile, open
 mouth with fangs) and your hands become its paws: the top of the paw when
 you show the back of your hand, the soft toe beans when you show your palm. Its ears perk up when you raise
@@ -100,7 +100,7 @@ on its own.
 
 | Key        | What it does                                              |
 |------------|-----------------------------------------------------------|
-| `1` to `6` | switch cat, at any time                                   |
+| `1` to `7` | switch cat, at any time                                   |
 | `c`        | open the cat picker (the call keeps showing your cat)     |
 | `Esc`      | close the picker                                          |
 | `n`        | "this is my neutral face": recalibrate face and head pose |

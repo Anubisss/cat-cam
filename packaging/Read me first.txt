@@ -27,7 +27,7 @@ INSTALL (once)
 
 USE
 
-- Open Cat Cam and click a cat (or press 1 to 6).
+- Open Cat Cam and click a cat (or press its number).
 - In Zoom: Settings > Video > Camera > "OBS Virtual Camera". If it isn't
   listed, restart Zoom while Cat Cam is open.
 - Keep a relaxed face for the first second. If the cat looks grumpy or

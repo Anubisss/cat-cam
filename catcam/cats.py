@@ -31,7 +31,10 @@ def available(assets: Path = ASSETS) -> list[str]:
 
 def portraits(folder: Path = PORTRAITS) -> dict[str, Path]:
     """{name: path} of the cat portraits (not the paw photos next to them)."""
-    return {p.stem: p for p in sorted(folder.glob("*.png")) if not is_paw_photo(p.stem)}
+    if not folder.is_dir():
+        return {}
+    pngs = sorted(p for p in folder.iterdir() if p.suffix.lower() == ".png")  # also .PNG
+    return {p.stem: p for p in pngs if not is_paw_photo(p.stem)}
 
 
 def unprepared(folder: Path = PORTRAITS, assets: Path = ASSETS) -> list[str]:

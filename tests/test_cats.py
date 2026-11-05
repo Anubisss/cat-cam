@@ -28,9 +28,10 @@ def test_unprepared(tmp_path):
     portraits.mkdir()
     for name in ("Amy", "Bob", "AmyPawsFront", "BobPawsBack"):
         cv2.imwrite(str(portraits / f"{name}.png"), np.zeros((8, 8, 3), np.uint8))
+    cv2.imwrite(str(portraits / "Cid.PNG"), np.zeros((8, 8, 3), np.uint8))
     _prepare(assets, "Amy")
-    assert cats.unprepared(portraits, assets) == ["Bob"]  # paw photos aren't cats
-    assert list(cats.portraits(portraits)) == ["Amy", "Bob"]
+    assert cats.unprepared(portraits, assets) == ["Bob", "Cid"]  # paw photos aren't cats
+    assert list(cats.portraits(portraits)) == ["Amy", "Bob", "Cid"]
 
 
 def test_load_reads_paw_photos(tmp_path):
@@ -53,7 +54,7 @@ def test_load_rejects_missing_cutout(tmp_path):
 
 
 def test_shipped_cats(real_cats):
-    assert [c.name for c in real_cats] == ["Balint", "David", "Laci", "Mate", "TMarci", "VMarci"]
+    assert [c.name for c in real_cats] == ["Balint", "David", "Dori", "Laci", "Mate", "TMarci", "VMarci"]
     for cat in real_cats:
         assert cat.sprite.shape[2] == 4
         assert cat.points.shape == (478, 3)
