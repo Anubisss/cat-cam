@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import pytest
 
 from catcam.head_pose import (
     MAX_ANGLE,
@@ -75,3 +76,49 @@ def test_one_euro_smooths_then_converges_on_a_step():
     for _ in range(300):
         out = f(np.ones(1), 1 / 30)[0]
     assert out > 0.999
+
+
+def _shake(f, samples, dt=1 / 30):
+    """How much the filter's output moves from frame to frame (std)."""
+    return np.std(np.diff([f(x, dt).copy() for x in samples], axis=0))
+
+
+def test_one_euro_floor_keeps_noise_at_the_minimum_cutoff(rng):
+    # Noise moving slower than the floor doesn't loosen the filter: it shakes as
+    # little as with no speed adaptation at all.
+    samples = rng.normal(scale=0.001, size=(300, 3))
+    calm = _shake(OneEuroFilter(0.5, 0.0), samples)
+    assert _shake(OneEuroFilter(0.5, 20.0, floor=1.0), samples) == pytest.approx(calm)
+    assert _shake(OneEuroFilter(0.5, 20.0), samples) > 1.5 * calm
+
+
+def test_one_euro_floor_still_follows_real_moves():
+    # A 2 rad/s turn is far above the floor: after a third of a second the
+    # output trails it by little, unlike with the minimum cutoff alone.
+    floored, calm = OneEuroFilter(0.1, 20.0, floor=0.15), OneEuroFilter(0.1, 0.0)
+    for k in range(11):
+        turn = np.array([2.0 * k / 30])
+        a, b = floored(turn, 1 / 30), calm(turn, 1 / 30)
+    assert turn[0] - a[0] < 0.1 < turn[0] - b[0]
+
+
+def test_one_euro_per_point_lets_a_moving_point_through(rng):
+    # One point (the mouth) moves, the other 99 stay: on its own it follows
+    # sooner than when its speed is averaged with the still ones.
+    still = np.zeros((100, 3))
+    shared, own = OneEuroFilter(0.5, 20.0), OneEuroFilter(0.5, 20.0, per_point=True)
+    for f in (shared, own):
+        f(still, 1 / 30)
+    moved = still.copy()
+    for k in range(1, 6):
+        moved[0, 1] = 0.02 * k
+        a, b = shared(moved, 1 / 30), own(moved, 1 / 30)
+    assert b[0, 1] > a[0, 1] + 0.01
+    np.testing.assert_allclose(b[1:], 0)
+
+
+def test_one_euro_reset_takes_the_next_value_as_it_is():
+    f = OneEuroFilter(0.5, 1.0)
+    f(np.zeros(2), 1 / 30)
+    f.reset()
+    np.testing.assert_allclose(f(np.array([4.0, 5.0]), 1 / 30), [4.0, 5.0])

@@ -45,26 +45,40 @@ def to_matrix(vec: np.ndarray) -> np.ndarray:
 class OneEuroFilter:
     """Adaptive low-pass filter: smooth when still, responsive when moving.
 
-    See https://gery.casiez.net/1euro/
+    See https://gery.casiez.net/1euro/. Speeds up to `floor` are what tracking
+    noise alone makes; they don't loosen the filter, so it can be smooth at rest
+    and still quick once you really move. With per_point, x is (points, dims)
+    and each point gets its own speed and cutoff: an opening mouth then follows
+    at once without the still rest of the face shaking more.
     """
 
-    def __init__(self, min_cutoff: float, beta: float, d_cutoff: float = 1.0):
+    def __init__(self, min_cutoff: float, beta: float, d_cutoff: float = 1.0, floor: float = 0.0,
+                 per_point: bool = False):
         self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
+        self.floor, self.per_point = floor, per_point
+        self.reset()
+
+    def reset(self):
+        """Start afresh: the next value is taken as it is."""
         self.value = None
         self.speed = 0.0
 
     @staticmethod
-    def _alpha(cutoff: float, dt: float) -> float:
+    def _alpha(cutoff, dt: float):
         tau = 1 / (2 * math.pi * cutoff)
         return 1 / (1 + tau / dt)
 
     def __call__(self, x: np.ndarray, dt: float) -> np.ndarray:
+        x = np.asarray(x, np.float64)
         if self.value is None:
-            self.value = np.asarray(x, np.float64)
+            self.value = x
             return self.value
-        # RMS speed per component, so the filter behaves the same for any size.
-        speed = np.sqrt(np.mean(np.square(x - self.value))) / dt
-        self.speed += self._alpha(self.d_cutoff, dt) * (speed - self.speed)
-        cutoff = self.min_cutoff + self.beta * self.speed
-        self.value = self.value + self._alpha(cutoff, dt) * (x - self.value)
+        step = x - self.value
+        if self.per_point:
+            speed = np.linalg.norm(step, axis=-1) / dt
+        else:  # RMS speed per component, so the filter behaves the same for any size
+            speed = np.sqrt(np.mean(np.square(step))) / dt
+        self.speed = self.speed + self._alpha(self.d_cutoff, dt) * (speed - self.speed)
+        alpha = self._alpha(self.min_cutoff + self.beta * np.maximum(self.speed - self.floor, 0), dt)
+        self.value = self.value + (alpha[..., None] if self.per_point else alpha) * step
         return self.value

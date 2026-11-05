@@ -65,10 +65,14 @@ KEY_HINTS = (("c", "Change cat"), ("1-8", "Reactions"), ("n", "Neutral face"), (
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.5  # 0..1, higher = snappier; soften small tracking changes
-# One Euro filters: lower MIN_CUTOFF = less jitter when still, higher BETA =
-# less lag when moving fast. Expression speeds are in face widths per second.
-ROTATION_MIN_CUTOFF, ROTATION_BETA = 0.8, 3.5
-EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA = 1.5, 30.0
+# One Euro filters (see catcam.head_pose): lower MIN_CUTOFF (Hz) = less jitter
+# when still, higher BETA = less lag when moving fast; moving slower than FLOOR
+# is taken for tracking noise. Head speeds are in radians per second; expression
+# speeds in face widths per second, for each face point on its own. Tuned with
+# tools/tracking_eval.py.
+ROTATION_MIN_CUTOFF, ROTATION_BETA, ROTATION_FLOOR = 0.1, 12.0, 0.15
+EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA, EXPRESSION_FLOOR = 0.7, 20.0, 0.06
+SPEED_CUTOFF = (3.0, 2.0)  # Hz, how quickly the head's and the face's speed estimates follow
 
 # Blendshape score range mapped to 0..1 eye closedness...
 BLINK_RANGE = (0.45, 0.75)
@@ -173,8 +177,10 @@ class FaceState:
     """Your smoothed head pose and expression, independent of the cat."""
 
     def __init__(self):
-        self.rotation_filter = OneEuroFilter(ROTATION_MIN_CUTOFF, ROTATION_BETA)
-        self.expression_filter = OneEuroFilter(EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA)
+        self.rotation_filter = OneEuroFilter(ROTATION_MIN_CUTOFF, ROTATION_BETA, SPEED_CUTOFF[0],
+                                             ROTATION_FLOOR)
+        self.expression_filter = OneEuroFilter(EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA, SPEED_CUTOFF[1],
+                                               EXPRESSION_FLOOR, per_point=True)
         self.transfer = ExpressionTransfer()
         self.neutral_pose = None  # the pose that faces the viewer; None = looking into the camera
         self.take_pose = False
