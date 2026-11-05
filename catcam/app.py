@@ -39,17 +39,17 @@ OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
-BLINK_SMOOTHING = 0.7  # 0..1, higher = snappier; kept snappy so blinks show
+BLINK_SMOOTHING = 0.5  # 0..1, higher = snappier; soften small tracking changes
 # One Euro filters: lower MIN_CUTOFF = less jitter when still, higher BETA =
 # less lag when moving fast. Expression speeds are in face widths per second.
 ROTATION_MIN_CUTOFF, ROTATION_BETA = 0.8, 3.5
 EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA = 1.5, 30.0
 
 # Blendshape score range mapped to 0..1 eye closedness...
-BLINK_RANGE = (0.3, 0.6)
+BLINK_RANGE = (0.45, 0.75)
 # ...and, as some people's blink score stays low, also how much the eye
 # opening shrank compared to your neutral face.
-SHUT_RANGE = (0.35, 0.75)
+SHUT_RANGE = (0.5, 0.9)
 # The neutral face only adapts while all of these are low.
 EXPRESSIVE = [
     "jawOpen", "mouthSmileLeft", "mouthSmileRight", "mouthPucker", "mouthFunnel",

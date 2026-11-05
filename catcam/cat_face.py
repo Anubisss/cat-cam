@@ -15,13 +15,13 @@ EYES = (
     ([33, 246, 161, 160, 159, 158, 157, 173, 133], [33, 7, 163, 144, 145, 153, 154, 155, 133]),
     ([263, 466, 388, 387, 386, 385, 384, 398, 362], [263, 249, 390, 373, 374, 380, 381, 382, 362]),
 )
-LID_SKIN = 1.2  # how much skin above the eye (in eye heights) slides down
+LID_SKIN = 0.9  # how much skin above the eye (in eye heights) slides down
 # The cat's real upper lid sits above the landmarks by this fraction of the
 # local eye height...
 LID_OFFSET = 0.3
 # ...and its lower lid below them, by this fraction of the local eye height;
 # a closed lid reaches down that far.
-LID_BELOW = 1.0
+LID_BELOW = 0.65
 # The eye also reaches past the landmark corners: the lid extends this far
 # beyond them (in eye widths), covering at least CORNER_PAD eye heights.
 CORNER_REACH, CORNER_PAD = 0.2, 0.5
