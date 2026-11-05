@@ -37,32 +37,32 @@ ROOT_DEPTH = 0.02  # teeth start this far inside the gum, so nothing shows where
 FIRST_GAP = 0.004  # between the two middle incisors
 
 # Teeth on each side, from the middle back: (kind, width along the arch, thickness across
-# it, crown length, gap before it), mouth widths. Cats: tiny incisors, long slender fangs,
+# it, crown length, gap before it), mouth widths. Cats: tiny incisors, short rounded fangs,
 # a gap, then blade-like premolars ending in the carnassial. Dogs: bigger incisors, stout
-# fangs and a row of premolars.
+# rounded fangs and a row of premolars. Friendly, not fierce: the fangs are kept short.
 TEETH = {
     "cat": {
         "upper": [("incisor", 0.022, 0.016, 0.03, 0), ("incisor", 0.022, 0.016, 0.032, 0.003),
-                  ("incisor", 0.026, 0.02, 0.04, 0.003), ("canine", 0.062, 0.052, 0.23, 0.02),
+                  ("incisor", 0.026, 0.02, 0.04, 0.003), ("canine", 0.05, 0.044, 0.1, 0.02),
                   ("premolar", 0.03, 0.018, 0.025, 0.05), ("premolar", 0.055, 0.024, 0.05, 0.006),
                   ("carnassial", 0.095, 0.03, 0.06, 0.006)],
         "lower": [("incisor", 0.018, 0.014, 0.025, 0), ("incisor", 0.018, 0.014, 0.027, 0.003),
-                  ("incisor", 0.02, 0.016, 0.03, 0.003), ("canine", 0.055, 0.046, 0.18, 0.01),
+                  ("incisor", 0.02, 0.016, 0.03, 0.003), ("canine", 0.044, 0.04, 0.08, 0.01),
                   ("premolar", 0.05, 0.022, 0.045, 0.06), ("premolar", 0.055, 0.024, 0.05, 0.006),
                   ("molar", 0.08, 0.028, 0.055, 0.006)],
     },
     "dog": {
         "upper": [("incisor", 0.032, 0.022, 0.045, 0), ("incisor", 0.032, 0.022, 0.047, 0.003),
-                  ("incisor", 0.04, 0.03, 0.06, 0.004), ("canine", 0.085, 0.072, 0.21, 0.016),
+                  ("incisor", 0.04, 0.03, 0.06, 0.004), ("canine", 0.07, 0.06, 0.11, 0.016),
                   ("premolar", 0.05, 0.024, 0.045, 0.03), ("premolar", 0.06, 0.026, 0.05, 0.008),
                   ("carnassial", 0.1, 0.032, 0.07, 0.008)],
         "lower": [("incisor", 0.028, 0.02, 0.04, 0), ("incisor", 0.028, 0.02, 0.042, 0.003),
-                  ("incisor", 0.032, 0.024, 0.048, 0.003), ("canine", 0.075, 0.064, 0.17, 0.012),
+                  ("incisor", 0.032, 0.024, 0.048, 0.003), ("canine", 0.064, 0.056, 0.09, 0.012),
                   ("premolar", 0.045, 0.022, 0.04, 0.035), ("premolar", 0.05, 0.024, 0.045, 0.008),
                   ("premolar", 0.055, 0.026, 0.05, 0.008)],
     },
 }
-CANINE_CURVE = {"cat": 0.24, "dog": 0.16}  # fang tips bend back into the mouth by this share of their length
+CANINE_CURVE = {"cat": 0.08, "dog": 0.06}  # fang tips bend back into the mouth by this share of their length
 
 # Gums: the crest wraps each tooth this much beyond its thickness, and dips between teeth
 # (and rises over each tooth's middle) by SCALLOP; heights of the band into the lip on the
@@ -161,7 +161,8 @@ def _ring_tooth(c, along, out, up, width, thick, length, kind, curve):
     sides = 8
     if kind == "canine":
         ts = [-ROOT_DEPTH / length, 0, 0.15, 0.35, 0.55, 0.75, 0.9]
-        size = lambda t: (1 - t) ** 0.7 * (1 + 0.12 * _gauss(t, 0.08, 0.12))  # noqa: E731
+        # A rounded cone: it tapers, then closes in a dome rather than a point.
+        size = lambda t: (1 - 0.5 * t) * np.sqrt(max(1 - t ** 3, 0.0))  # noqa: E731
         across, power, bend = lambda t: 1.0, 2.0, curve  # noqa: E731
     else:
         ts = [-ROOT_DEPTH / length, 0, 0.4, 0.75, 0.92]

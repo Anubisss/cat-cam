@@ -21,7 +21,7 @@ from catcam import mouth3d
 from catcam.cat_mesh import CHIN_LINE, TOP_MARGIN, CatMesh, Renderer, _outline
 from catcam.ears import bend, find_ears
 from catcam.lighting import LIGHT, SHADE_RANGE, STRENGTH
-from catcam.mouth_fit import LOWER_INNER_LIP, UPPER_INNER_LIP
+from catcam.mouth_fit import LOWER_INNER_LIP, OUTER_LIPS, UPPER_INNER_LIP
 from catcam.paths import ASSETS
 
 FOV = 25  # vertical field of view of the virtual camera, degrees
@@ -42,6 +42,7 @@ DEPTH_SPAN = 1.5  # model units in front of / behind the head kept in the depth 
 FLIP = np.diag([1.0, -1.0, -1.0])
 MOUTH_CORNERS = (UPPER_INNER_LIP[0], UPPER_INNER_LIP[-1])
 LIP_MIDDLE = (13, 14)  # where the upper and lower inner lips meet in the middle
+LOWER_LIP = LOWER_INNER_LIP[1:-1] + OUTER_LIPS[12:]  # its landmarks, without the corners
 JAW_MAX = 1.0  # radians, the most the jaw tilts; beyond that it just drops with the lip
 BREATH_RISE = 0.008  # head heights a full breath lifts the head by
 # A head with its own jaw (see catcam.head3d_import) opens it about a hinge this
@@ -100,21 +101,27 @@ uniform bool own_mouth;  // nothing added inside: the head's own inside shows be
 uniform vec3 inside;     // ...in this colour (BGR): its back faces around the mouth (mouth_box,
 uniform vec4 mouth_box;  // screen px) with no outside of the head behind them (skin's depth)
 uniform sampler2D skin;
+uniform bool outside_only;  // drawing the skin's depth: the opening between the lips has none
 in vec2 uv;
 in float shade;
 in vec3 normal;
 out vec4 color;
 """ + IN_OPENING + """
 void main() {
+    gl_FragDepth = gl_FragCoord.z;
     vec2 p = gl_FragCoord.xy;
     bool near_mouth = all(greaterThan(p, mouth_box.xy)) && all(lessThan(p, mouth_box.zw));
     // Between its cut lips everything of the head is its inside (whatever the model has
     // there was never seen); round them, so are back faces with no outside behind them.
     // Elsewhere a back face is the back of a tuft of fur, drawn like the rest.
-    bool inner = in_opening(p) || !gl_FrontFacing && near_mouth && texelFetch(skin, ivec2(p), 0).r == 1.0;
+    bool gap = in_opening(p);
+    if (outside_only && gap) discard;
+    bool inner = gap || !gl_FrontFacing && near_mouth && texelFetch(skin, ivec2(p), 0).r == 1.0;
     if (own_mouth && inner) {
         // Darker where the inside turns away from the camera, so it reads as a hollow.
         color = vec4(inside * (0.35 + 0.65 * abs(normalize(normal).z)), 1.0);
+        // Between the lips it is only the backdrop: the teeth and tongue go in front of it.
+        if (gap) gl_FragDepth = 0.99999;
         return;
     }
     if (seam && in_opening(gl_FragCoord.xy)) discard;
@@ -284,7 +291,10 @@ class Head3D:
         self.photo_px = mesh["photo_px"]
         # A movement in portrait px (x right, y down, z away) as a movement of the model.
         self.to_model = (mesh["cam_rot"].T @ np.diag([1, -1, -1]) / mesh["cam_scale"]).astype(np.float64)
+        self.to_px = np.linalg.inv(self.to_model)
         face_width = np.ptp(points[:, 0])
+        self.rigid = lip_sides(self.photo_px, points, face_width)[3]  # below the lips...
+        self.rigid[LOWER_LIP] = False  # ...but for the lower lip
         jaw = mesh["jaw_weight"] if "jaw_weight" in mesh.files else np.zeros(0)
         self.jaw_weight = jaw.astype(np.float64)[:, None] if len(jaw) else None
         self.follow = follow_weights(self.rest, self.photo_px, self.landmarks, points,
@@ -406,8 +416,22 @@ class Head3D:
         shaped = self.rest + moves @ self.to_model.T
         if self.jaw_weight is None:
             return shaped
-        swung = self._swing(self.rest, landmark_moves)
-        return shaped + self.jaw_weight * (swung - shaped)
+        # The jaw swings rigidly (the chin with it), but the skin on it still does what
+        # your lips do beyond that (a smile pulling the corners up and out), as the face
+        # does, so the two sides of the cut between the lips stay together.
+        jaw = self._own_jaw(landmark_moves)
+        swing = (self.landmarks @ jaw[:3, :3].T + jaw[:3, 3] - self.landmarks) @ self.to_px.T
+        beyond = np.where(self.rigid[:, None], 0.0, landmark_moves - swing)
+        beyond[:, 1] = np.minimum(beyond[:, 1], 0)  # dropping further than the jaw goes would only stretch it
+        swung = (self.rest + (self.follow @ beyond) @ self.to_model.T) @ jaw[:3, :3].T + jaw[:3, 3]
+        shaped = shaped + self.jaw_weight * (swung - shaped)
+        if self.lip_cut is not None and len(self.lip_cut):
+            # Where they were cut apart the lips part only as far as the jaw swings.
+            face, chin = self.lip_cut.T
+            turn, upper = jaw[:3, :3], landmark_moves[LIP_MIDDLE[0]] @ self.to_model.T
+            swung = shaped[face] @ turn.T + jaw[:3, 3] - upper @ turn.T
+            shaped[chin] = shaped[face] + self.jaw_weight[chin] * (swung - shaped[face])
+        return shaped
 
     def _own_jaw(self, landmark_moves: np.ndarray) -> np.ndarray:
         """Model -> model (4x4) for the head's own jaw: turned about its hinge as far
@@ -423,11 +447,6 @@ class Head3D:
         jaw[:3, :3] = turn
         jaw[:3, 3] = pivot - turn @ pivot + moved[0]
         return jaw
-
-    def _swing(self, points: np.ndarray, landmark_moves: np.ndarray) -> np.ndarray:
-        """points (model, at rest) where the head's own jaw puts them."""
-        jaw = self._own_jaw(landmark_moves)
-        return points @ jaw[:3, :3].T + jaw[:3, 3]
 
     def _mouth_matrices(self, landmark_moves: np.ndarray):
         """Mouth frame -> model, for the parts moving with the upper lip and with the jaw."""
@@ -485,9 +504,7 @@ class Head3D:
         top, bottom = edge(upper), edge(lower)
         return list(zip(centres, top)) + list(zip(centres[::-1], bottom[::-1]))
 
-    def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray, shaped: np.ndarray):
-        if self.own_mouth and self.lip_cut is not None and len(self.lip_cut):
-            self.prog["opening"].value = self._lip_gap(shaped, model_rot)
+    def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray):
         if not self.own_mouth:
             # The gap between the lips on screen: upper lip left to right, lower lip back.
             ring = UPPER_INNER_LIP + LOWER_INNER_LIP[::-1]
@@ -525,17 +542,21 @@ class Head3D:
         r.ctx.disable(moderngl.BLEND)
         self.texture.use(0)
         if self.own_mouth:
+            if self.lip_cut is not None and len(self.lip_cut):
+                self.prog["opening"].value = self._lip_gap(shaped, model_rot)
             self.skin_fbo.use()
             self.skin_fbo.clear(depth=1.0)
             r.ctx.enable(moderngl.CULL_FACE)
             self.prog["seam"].value = False
+            self.prog["outside_only"].value = True
             self.vao.render()
+            self.prog["outside_only"].value = False
             r.ctx.disable(moderngl.CULL_FACE)
             self.skin.use(1)
             self.prog["mouth_box"].value = self._mouth_box(shaped[self.on_jaw], model_rot)
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)
-        self._draw_mouth(landmark_moves, model_rot, shaped)
+        self._draw_mouth(landmark_moves, model_rot)
         self.prog["seam"].value = False
         self.vao.render()
         if self.seam_vao is not None:

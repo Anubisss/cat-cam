@@ -58,6 +58,11 @@ LIP_SEED_GAP = 0.04
 # of the chin, under it) the skin stretches instead, the jaw's pull fading over
 # JAW_SOFT face widths across the edge.
 CUT_REACH, CUT_FADE, JAW_SOFT = 0.06, 0.04, 0.03
+# At the corners of the mouth the lips stay together, so it opens in a lens, not a slot,
+# and the corners keep following your face (a smile): from CORNER_START of the way out
+# from its middle, the jaw's pull on the lips fades to nothing at the corners and past
+# them, coming back over CORNER_DEPTH face widths below the line where the lips meet.
+CORNER_START, CORNER_DEPTH = 0.4, 0.12
 LIPS_APART = 0.3  # share of the jaw's pull by which a cut's two sides must differ to count as the lips' cut
 JAW_FOLD = 0.1
 JAW_SMOOTH = 0.01
@@ -405,6 +410,17 @@ def cut_jaw(attributes: dict, faces, margin, reach, cut=None):
     return out, faces, jaw.astype(np.float32)
 
 
+def corners_together(vertices, lips, cam: "FrontCamera", face_model) -> np.ndarray:
+    """How much of the jaw's pull each vertex keeps so the lips stay together at the
+    corners of the mouth (see CORNER_START); lips: the line where they meet (model)."""
+    q, line = vertices @ cam.rot.T, lips @ cam.rot.T  # seen from the front: x right, y up
+    line = line[np.argsort(line[:, 0])]
+    middle, half = line[:, 0].mean(), np.ptp(line[:, 0]) / 2
+    out = smoothstep((np.abs(q[:, 0] - middle) / half - CORNER_START) / (1 - CORNER_START))
+    below = (np.interp(q[:, 0], line[:, 0], line[:, 1]) - q[:, 1]) / face_model
+    return 1 - out * (1 - smoothstep(below / CORNER_DEPTH))
+
+
 def find_slit(points, opens, cam: "FrontCamera", face_model):
     """Where the lips meet: the middle of the slit seen from the front (model) and its
     width (model units), from the points on the cut (points) where the jaw opens."""
@@ -476,6 +492,7 @@ def import_glb(glb: str, name: str, own_mouth: bool = False, animal: str = "cat"
         parts, faces, jaw = cut_jaw(attributes, faces, margin, reach, cut)
         vertices, normals, uv, photo_px = (parts[k] for k in ("vertices", "normals", "uv", "photo_px"))
         normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+        jaw = jaw * corners_together(vertices, landmarks[UPPER_INNER_LIP], cam, face_model).astype(np.float32)
         middle, width = find_slit(vertices[n:], jaw[n:] > 0.5, cam, face_model)
         slit = {"slit_middle": middle.astype("f4"), "slit_width": np.float32(width)}
         # Where the lips were cut apart: each point twice, on the face's side and on the

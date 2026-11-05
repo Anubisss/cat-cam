@@ -242,7 +242,15 @@ that:
   would poke out through the skin anywhere are not drawn there.
 - **Opening it:** the jaw swings about a hinge behind the mouth corners, where
   a dog's jaw joint is (`JAW_HINGE` in `catcam/head3d.py`), as far as your
-  lower lip drops, up to `OWN_JAW_MAX`.
+  lower lip drops, up to `OWN_JAW_MAX`. Toward the mouth corners less and
+  less of the jaw swings (`CORNER_START`, `CORNER_DEPTH` in
+  `catcam/head3d_import.py`), so the lips stay together there and the
+  opening is lens-shaped rather than a slot. Beyond the swing the lower lip
+  still does what your lips do (a smile pulls both corners up and out), and
+  the two sides of the cut part only as far as the jaw swings, so a smile
+  with the mouth closed shows no crack.
+- **Teeth** are short and rounded on purpose: a friendly cartoon, not a
+  predator (`tools/mouth_model.py`).
 
 The import prints how many vertices move with the jaw. If the jaw takes a
 piece of the upper lip, or leaves part of the lower lip behind, the knobs are
