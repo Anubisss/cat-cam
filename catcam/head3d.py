@@ -39,7 +39,7 @@ DEPTH_SPAN = 1.5  # model units in front of / behind the head kept in the depth 
 FLIP = np.diag([1.0, -1.0, -1.0])
 MOUTH_CORNERS = (UPPER_INNER_LIP[0], UPPER_INNER_LIP[-1])
 LIP_MIDDLE = (13, 14)  # where the upper and lower inner lips meet in the middle
-JAW_MAX = 0.7  # radians, the widest the jaw opens
+JAW_MAX = 1.0  # radians, the most the jaw tilts; beyond that it just drops with the lip
 
 VERTEX_SHADER = """
 #version 330
@@ -318,7 +318,8 @@ class Head3D:
         follow = moved[0]  # everything moves with the upper lip
         drop = (moved[1] - moved[0]) @ self.mouth_axes[:, 1]  # the lower lip's, down is negative
         hinge = np.array(mouth3d.HINGE)
-        angle = np.clip(np.arctan2(-drop, -hinge[2] * self.mouth_width), 0, JAW_MAX)
+        reach = np.linalg.norm(hinge[1:]) * self.mouth_width  # hinge to the front teeth
+        angle = min(np.arcsin(np.clip(-drop / reach, 0, 1)), JAW_MAX)
         skull = np.eye(4)
         skull[:3, :3] = self.mouth_axes * self.mouth_width
         skull[:3, 3] = self.mouth_origin + follow
@@ -327,7 +328,11 @@ class Head3D:
         swing[1:3, 1:3] = [[c, -s], [s, c]]
         to_hinge, back = np.eye(4), np.eye(4)
         to_hinge[:3, 3], back[:3, 3] = -hinge, hinge
-        return skull, skull @ back @ swing @ to_hinge
+        jaw = skull @ back @ swing @ to_hinge
+        # Pinned to the lower lip: its front teeth stay right behind it however wide it opens.
+        lower_lip = self.landmarks[LIP_MIDDLE[1]] + moved[1]
+        jaw[:3, 3] += lower_lip - jaw[:3, 3]
+        return skull, jaw
 
     def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray):
         skull, jaw = self._mouth_matrices(landmark_moves)
