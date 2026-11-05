@@ -34,9 +34,11 @@ from catcam.paths import FACE_MODEL, HAND_MODEL
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker, put_text
+from catcam.tail import TAIL_HAND, Tail, TailSkin, tail_skin
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
+TAIL_CATS = ("David",)  # one of your hands is their tail instead of a paw
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.7  # 0..1, higher = snappier; kept snappy so blinks show
@@ -71,6 +73,7 @@ class Cat:
     eyelids: CatFace
     mesh: CatMesh
     paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
+    tail: TailSkin | None
     sprite: np.ndarray
     background: np.ndarray
 
@@ -93,6 +96,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             eyelids=CatFace(a.sprite, a.points[:, :2]),
             mesh=CatMesh(renderer, a.sprite, a.points, a.background),
             paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
+            tail=tail_skin(a.paws) if name in TAIL_CATS else None,
             sprite=a.sprite,
             background=a.background,
         ))
@@ -173,10 +177,13 @@ class FaceState:
         self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
 
 
-def render(cat: Cat, state: FaceState, paws: Paws) -> np.ndarray:
+def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail) -> np.ndarray:
     sprite = cat.eyelids.render(blink=tuple(state.blink))
     offsets = state.transfer.to_cat(state.offsets, cat.points)
-    return paws.draw(cat.mesh.render(sprite, offsets, to_matrix(state.head), state.ears), cat.paw)
+    frame = cat.mesh.render(sprite, offsets, to_matrix(state.head), state.ears)
+    if cat.tail is None:
+        return paws.draw(frame, cat.paw)
+    return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=(TAIL_HAND,))
 
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None) -> np.ndarray:
@@ -319,7 +326,7 @@ def frames(webcam):
 
 def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam, webcam):
     face_tracker, hand_tracker = trackers
-    state, paws = FaceState(), Paws(OUT_W)
+    state, paws, tail = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H))
     start = last = time.monotonic()
     notice_until = 0.0
     app = terminal_name()
@@ -334,9 +341,11 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = cats[controls.current]
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
+        hand = paws.slots.get(TAIL_HAND, {}) if cat.tail is not None else {}
+        tail.update(hand.get("params"), hand.get("presence", 0.0), dt, *cat.mesh.face_on_screen())
 
         special = effects.update(now, cat.name)
-        out = special if special is not None else render(cat, state, paws)
+        out = special if special is not None else render(cat, state, paws, tail)
         vcam.send(out)
         if controls.picking:
             cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None))

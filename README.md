@@ -82,6 +82,9 @@ at the viewer". If the cat looks grumpy or turned while you are relaxed, press
 
 Raise your hands into the camera's view for paws. Turn a hand around to
 show the other side of the paw, and make a fist to curl its toes in.
+David has a tail instead of a second paw: your right hand holds up its tip,
+and the rest of the tail rises from below, trails behind, curls and swishes
+on its own.
 
 ### Keys (in the Cat Cam window)
 
@@ -147,6 +150,8 @@ These constants sit at the top of their files:
 | `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
 | `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
+| `TAIL_CATS` | `catcam/app.py` | which cats have a tail |
+| `TAIL_HAND`, `LENGTH`, `SWISH`, `DRAG` | `catcam/tail.py` | which hand holds the tail, how long it is, how much it sways by itself, and how quickly it calms down |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
 
 ## How it works
@@ -165,7 +170,10 @@ These constants sit at the top of their files:
 5. Blinks lower the cat's eyelids in its texture (`catcam/cat_face.py`), the
    ears bend about a hinge below their tips (`catcam/ears.py`), and paws are
    drawn where your hands are (`catcam/paws.py`), showing their top or their
-   sole depending on which way your hand faces.
+   sole depending on which way your hand faces. A tail (`catcam/tail.py`) is
+   a chain of points whose tip is pulled toward your hand; the rest is
+   simulated with momentum, even bending and a bend limit, and wrapped in the
+   skin of the cat's paw photo.
 6. The frame goes to the OBS virtual camera through pyvirtualcam.
 
 ## Development
@@ -187,6 +195,7 @@ catcam/
   face_motion.py   expression transfer
   head_pose.py     head rotation and the One Euro smoothing filter
   paws.py          paws
+  tail.py          the tail: a chain of points simulated like a real tail
   paw_photos.py    turns paw photos into paw sprites (used by prepare)
   prepare.py       turns all_cats/*.png into assets/cats/*
   landmark_fit.py  finds a cat's face points (used by prepare)

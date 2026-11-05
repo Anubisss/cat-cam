@@ -86,6 +86,15 @@ def test_two_hands_with_the_same_label_get_their_own_paws():
     assert (columns < 640).any() and (columns > 640).any()
 
 
+def test_hidden_hands_get_no_paw():
+    paw = paw_sprite(paw_style(*_cat()), width=100)
+    paws = Paws(out_width=1280)
+    paws.slots = {"Right": {"presence": 1.0, "params": np.array([640, 300, 120, 0, -1, -1, 0])}}
+    frame = np.zeros((720, 1280, 3), np.uint8)
+    assert paws.draw(frame, paw).any()
+    assert not paws.draw(frame, paw, hidden=("Right",)).any()
+
+
 def _photo_paw(color, width=60):
     """A BGRA paw photo: a wide paw on top of a narrower arm leaving at the bottom."""
     img = np.zeros((200, width + 20, 4), np.uint8)
