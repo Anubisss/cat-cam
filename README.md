@@ -154,6 +154,8 @@ uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera ope
    line. `prepare` cuts them out too; a cat without paw photos gets drawn
    paws in its colours.
 3. Run `uv run cat-cam`. The new cat appears in the picker.
+4. Optionally give it a 3D head, generated from the same portrait on your
+   Mac: see [docs/3d-heads.md](docs/3d-heads.md).
 
 ## Tuning
 
@@ -226,8 +228,13 @@ catcam/
   paw_photos.py    turns paw photos into paw sprites (used by prepare)
   prepare.py       turns all_cats/*.png into assets/cats/*
   landmark_fit.py  finds a cat's face points (used by prepare)
+  head3d.py        3D heads: the 3D head checkbox
+  mouth3d.py       a 3D head's teeth, tongue and jaw
+  head3d_import.py turns a generated .glb head into a cat's 3D head
 all_cats/          source portraits
-assets/cats/       prepared cats (cutout + face points), used at runtime
+assets/cats/       prepared cats (cutout + face points, 3D heads), used at runtime
+docs/3d-heads.md   how to make a 3D head
+tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet
 models/            MediaPipe face and hand models
 packaging/         the standalone macOS app: PyInstaller spec, icon, build script
 ```

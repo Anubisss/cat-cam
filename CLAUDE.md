@@ -28,12 +28,15 @@ an image and check them, as the tests only catch holes and gross errors.
 - `catcam/cat_face.py`: eyelids. `face_motion.py`: expression transfer.
   `head_pose.py`: head rotation and the One Euro filter.
 - `catcam/paws.py`, `paw_photos.py`: paws. `tail.py`: the tail.
-- `catcam/head3d.py`: experimental real 3D heads, shown as an extra "<Name> 3D"
-  cat when `assets/cats/<Name>/head3d.npz` exists. It borrows the 2D cat's
+- `catcam/head3d.py`: real 3D heads, shown while the "3D head" checkbox is
+  ticked, for cats with an `assets/cats/<Name>/head3d.npz`. It borrows the 2D cat's
   expressions, blinks and ears; `mouth3d.py` builds its teeth, tongue and
   mouth cavity, with a jaw that swings open. `head3d_import.py` turns a generated
   `.glb` head (e.g. from TRELLIS.2) into those assets:
   `uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name>`.
+  The whole recipe, from installing TRELLIS.2 on to checking the result, is in
+  `docs/3d-heads.md`; `tools/trellis/` holds its install script and fixes and
+  `tools/head3d_sheet.py` renders a cat's heads in the poses worth checking.
 - `catcam/prepare.py`, `landmark_fit.py`: turn portraits into cat assets
   (only needed when adding or changing a cat).
 - `assets/cats/<Name>/`: prepared cats, used at runtime. `all_cats/`: the
@@ -70,6 +73,8 @@ an image and check them, as the tests only catch holes and gross errors.
 4. Add the name to `test_shipped_cats` in `tests/test_cats.py`, regenerate
    `docs/picker.jpg` if the picker changed, and commit the pictures in
    `all_cats/` together with `assets/cats/<Name>/`.
+5. Optionally make its 3D head (`docs/3d-heads.md`) and check it with
+   `uv run python tools/head3d_sheet.py <Name> -o sheet.jpg`.
 
 ## Making a release
 

@@ -1,0 +1,61 @@
+diff --git a/backends/texture_baker.py b/backends/texture_baker.py
+index f1a1742..e813b08 100644
+--- a/backends/texture_baker.py
++++ b/backends/texture_baker.py
+@@ -176,7 +176,11 @@ def bake_texture(vertices, faces, uvs, voxel_coords, voxel_attrs, origin, voxel_
+     weights[distances > max_dist] = 0.0
+     weights_sum = weights.sum(axis=1, keepdims=True)
+ 
+-    # Find texels with at least one nearby voxel
++    # Texels with no voxel within max_dist (the simplified mesh drifts off the
++    # voxels in places) take their nearest voxel instead of staying black.
++    far = (weights_sum <= 0).squeeze()
++    weights[far, 0] = 1.0
++    weights_sum = weights.sum(axis=1, keepdims=True)
+     has_neighbor = (weights_sum > 0).squeeze()
+ 
+     # Normalize weights
+@@ -212,10 +216,12 @@ def bake_texture(vertices, faces, uvs, voxel_coords, voxel_attrs, origin, voxel_
+         unfilled = dilated & ~current_mask
+         if not unfilled.any():
+             break
++        # Average only the already-filled neighbours, so black doesn't bleed in.
++        count = uniform_filter(current_mask.astype(np.float32), size=3)
+         for c in range(3):
+             channel = base_color[:, :, c]
+-            blurred = uniform_filter(channel, size=3)
+-            channel[unfilled] = blurred[unfilled]
++            blurred = uniform_filter(channel * current_mask, size=3)
++            channel[unfilled] = blurred[unfilled] / np.maximum(count[unfilled], 1e-6)
+         current_mask = dilated
+ 
+     # Gamma correction: linear -> sRGB
+@@ -247,12 +253,16 @@ def export_glb_with_texture(vertices, faces, uvs, base_color_img, mr_img=None, o
+         baseColorTexture=base_color_pil,
+         metallicFactor=0.0,
+         roughnessFactor=0.8,
++        doubleSided=True,  # the simplified mesh's winding isn't consistent; don't let viewers cull half of it
+     )
+ 
+     if mr_img is not None:
+         mr_pil = Image.fromarray(mr_img)
+         material.metallicRoughnessTexture = mr_pil
+ 
++    # The baker's uvs count v down from the image's top row; trimesh expects
++    # OpenGL's v-up and flips on export, so flip here to land on glTF's convention.
++    uvs = np.column_stack([uvs[:, 0], 1.0 - uvs[:, 1]])
+     mesh.visual = trimesh.visual.TextureVisuals(
+         uv=uvs,
+         material=material,
+diff --git a/generate.py b/generate.py
+index b3f6718..d3986bd 100644
+--- a/generate.py
++++ b/generate.py
+@@ -231,6 +231,7 @@ def main():
+                     aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                     decimation_target=target_faces,
+                     texture_size=tex_size,
++                    remesh=os.environ.get("TRELLIS_REMESH") == "1",  # rebuild as one closed surface (no holes)
+                     verbose=True,
+                 )
+                 glb.export(glb_path)
