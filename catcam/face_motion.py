@@ -16,6 +16,9 @@ STABLE = [
     33, 133, 263, 362, 234, 454,
 ]
 NEUTRAL_RATE = 0.03  # how fast the neutral face adapts while you look relaxed
+# Each blendshape's resting score follows it down within REST_FALL s but up
+# only over REST_RISE s, so a few seconds of a smile don't become the rest.
+REST_FALL, REST_RISE = 0.5, 20.0
 
 
 def similarity(src: np.ndarray, dst: np.ndarray):
@@ -53,3 +56,22 @@ class ExpressionTransfer:
             return np.zeros_like(cat_points)
         s, r, _ = similarity(self.neutral[STABLE], cat_points[STABLE])
         return s * np.ptp(self.neutral[:, 0]) * offsets @ r.T
+
+
+class RestingScores:
+    """How each blendshape scores on your face while you do nothing.
+
+    Faces differ, and light matters: on some a pucker or a half-closed eye
+    scores 0.3 to 0.5 at rest. Expressions and blinks are what rises above this.
+    """
+
+    def __init__(self):
+        self.level = {}
+
+    def update(self, scores: dict, dt: float) -> dict:
+        """scores: this frame's blendshapes; returns the resting scores."""
+        for name, score in scores.items():
+            level = self.level.setdefault(name, score)
+            rate = dt / (REST_FALL if score < level else REST_RISE)
+            self.level[name] = level + min(rate, 1.0) * (score - level)
+        return self.level

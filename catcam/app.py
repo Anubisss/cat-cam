@@ -30,7 +30,7 @@ from catcam.background import Background, Chooser, behind
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.ears import EarMotion
-from catcam.face_motion import ExpressionTransfer
+from catcam.face_motion import ExpressionTransfer, RestingScores
 from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
 from catcam.head3d import Head3D, has_head
@@ -64,7 +64,9 @@ CAPSULE = (44, 16)  # the bottom capsule's height and its gap to the window's ed
 KEY_HINTS = (("c", "Change cat"), ("1-8", "Reactions"), ("n", "Neutral face"), ("q", "Quit"))
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
-BLINK_SMOOTHING = 0.5  # 0..1, higher = snappier; soften small tracking changes
+# The cat's lids close as fast as your eyes (a blink can be a single frame)
+# but open again over this many s, which also softens tracking flicker.
+BLINK_OPEN = 0.06
 # One Euro filters (see catcam.head_pose): lower MIN_CUTOFF (Hz) = less jitter
 # when still, higher BETA = less lag when moving fast; moving slower than FLOOR
 # is taken for tracking noise. Head speeds are in radians per second; expression
@@ -74,12 +76,14 @@ ROTATION_MIN_CUTOFF, ROTATION_BETA, ROTATION_FLOOR = 0.1, 12.0, 0.15
 EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA, EXPRESSION_FLOOR = 0.7, 20.0, 0.06
 SPEED_CUTOFF = (3.0, 2.0)  # Hz, how quickly the head's and the face's speed estimates follow
 
-# Blendshape score range mapped to 0..1 eye closedness...
-BLINK_RANGE = (0.45, 0.75)
+# How far an eye's blink score rises above its resting score (see
+# catcam.face_motion.RestingScores), mapped to 0..1 eye closedness...
+BLINK_RANGE = (0.2, 0.45)
 # ...and, as some people's blink score stays low, also how much the eye
 # opening shrank compared to your neutral face.
 SHUT_RANGE = (0.5, 0.9)
-# The neutral face only adapts while all of these are low.
+# The neutral face only adapts while none of these is more than RELAXED_BELOW
+# above its resting score.
 EXPRESSIVE = [
     "jawOpen", "mouthSmileLeft", "mouthSmileRight", "mouthPucker", "mouthFunnel",
     "mouthStretchLeft", "mouthStretchRight", "browInnerUp", "browOuterUpLeft",
@@ -159,14 +163,14 @@ def eye_openness(face: np.ndarray) -> np.ndarray:
     return np.array(openness)
 
 
-def blinks(scores, face=None, neutral=None):
-    """Eye closedness (image-left, image-right), each 0..1."""
+def blinks(scores, face=None, neutral=None, rest=None):
+    """Eye closedness (image-left, image-right), each 0..1; rest: the resting
+    scores (see catcam.face_motion.RestingScores), else 0."""
+    rest = rest or {}
     # MediaPipe names eyes from the person's view: their right eye is on the
     # image's left.
-    closed = np.array([
-        ramp(scores["eyeBlinkRight"], *BLINK_RANGE),
-        ramp(scores["eyeBlinkLeft"], *BLINK_RANGE),
-    ])
+    closed = np.array([ramp(scores[name] - rest.get(name, 0.0), *BLINK_RANGE)
+                       for name in ("eyeBlinkRight", "eyeBlinkLeft")])
     if face is not None and neutral is not None:
         shrunk = 1 - eye_openness(face) / np.maximum(eye_openness(neutral), 1e-6)
         closed = np.maximum(closed, [ramp(v, *SHUT_RANGE) for v in shrunk])
@@ -182,6 +186,7 @@ class FaceState:
         self.expression_filter = OneEuroFilter(EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA, SPEED_CUTOFF[1],
                                                EXPRESSION_FLOOR, per_point=True)
         self.transfer = ExpressionTransfer()
+        self.resting = RestingScores()
         self.neutral_pose = None  # the pose that faces the viewer; None = looking into the camera
         self.take_pose = False
         self.head = np.zeros(3)  # rotation vector; 0 = facing the viewer
@@ -219,9 +224,11 @@ class FaceState:
         self.head = self.rotation_filter(head, dt)
         scores = {c.category_name: c.score for c in result.face_blendshapes[0]}
         self.ears = self.ear_motion.update(scores, dt, now)
-        closed = blinks(scores, self.face, self.transfer.neutral)
-        self.blink = self.blink + BLINK_SMOOTHING * (closed - self.blink)
-        relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
+        rest = self.resting.update(scores, dt)
+        closed = blinks(scores, self.face, self.transfer.neutral, rest)
+        opening = 1 - np.exp(-dt / BLINK_OPEN)
+        self.blink = np.where(closed > self.blink, closed, self.blink + opening * (closed - self.blink))
+        relaxed = max(scores[name] - rest[name] for name in EXPRESSIVE) < RELAXED_BELOW
         offsets = EXPRESSION_GAIN * self.transfer(self.face, relaxed)
         self.offsets = self.expression_filter(offsets, dt)
         self.measured = (head, offsets, closed)

@@ -216,7 +216,7 @@ These constants sit at the top of their files:
 | `EXPRESSION_GAIN` | `catcam/app.py` | how exaggerated the cat's expressions are (1 = same as you) |
 | `EXPRESSION_MIN_CUTOFF`, `EXPRESSION_BETA`, `EXPRESSION_FLOOR` | `catcam/app.py` | face smoothing: lower cutoff means less jitter, higher beta means less lag, and moves slower than the floor count as tracking noise (measure with `tools/tracking_eval.py`) |
 | `ROTATION_MIN_CUTOFF`, `ROTATION_BETA`, `ROTATION_FLOOR` | `catcam/app.py` | the same for head movement |
-| `BLINK_RANGE` | `catcam/app.py` | how far you close your eyes before the cat blinks |
+| `BLINK_RANGE`, `BLINK_OPEN` | `catcam/app.py` | how far your eyes' blink scores must rise above their resting level before the cat blinks, and how quickly its lids open again |
 | `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
 | `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
