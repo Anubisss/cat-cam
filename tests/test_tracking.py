@@ -1,12 +1,13 @@
-"""How FaceState follows a face: blinks, resting scores."""
+"""How FaceState follows a face: blinks, resting scores, losing the face."""
 
 from types import SimpleNamespace
 
 import numpy as np
 
-from catcam.app import BLINK_RANGE, FaceState, blinks
+from catcam.app import BLINK_RANGE, EASE_BACK, KEEP_POSE, RELAX, FaceState, blinks
 from catcam.cat_face import EYES
 from catcam.face_motion import REST_FALL, REST_RISE, RestingScores
+from catcam.head_pose import to_matrix
 
 DT = 1 / 15  # a webcam in a dim room
 
@@ -82,3 +83,51 @@ def test_a_pucker_at_rest_still_lets_the_neutral_face_adapt(rng):
     for k in range(1, 200):
         state.update(_result(moved, matrix, mouthPucker=0.4), (1280, 720), DT, k * DT)
     assert abs(state.offsets[61, 1]) < 0.002
+
+
+def _turned(matrix, yaw):
+    """The matrix with the head turned by yaw radians (MediaPipe's axes)."""
+    turned = matrix.copy()
+    turned[:3, :3] = to_matrix(np.array([0.0, yaw, 0.0]))
+    return turned
+
+
+def _no_face():
+    return SimpleNamespace(face_landmarks=[], facial_transformation_matrixes=[], face_blendshapes=[])
+
+
+def test_a_lost_face_keeps_its_pose_then_relaxes(rng):
+    points, matrix = _face(rng)
+    state = FaceState()
+    for k in range(30):
+        state.update(_result(points, _turned(matrix, 0.4)), (1280, 720), DT, k * DT)
+    turned = state.head.copy()
+    assert np.linalg.norm(turned) > 0.35
+    t = 30 * DT
+    while t < 30 * DT + KEEP_POSE - DT:
+        state.update(_no_face(), (1280, 720), DT, t)
+        t += DT
+    np.testing.assert_allclose(state.head, turned)
+    for _ in range(round(4 * RELAX / DT)):
+        state.update(_no_face(), (1280, 720), DT, t)
+        t += DT
+    assert np.linalg.norm(state.head) < 0.05 * np.linalg.norm(turned)
+
+
+def test_a_face_coming_back_elsewhere_eases_over_instead_of_jumping(rng):
+    points, matrix = _face(rng)
+    state = FaceState()
+    t = 0.0
+    for _ in range(30):
+        state.update(_result(points, matrix), (1280, 720), DT, t)
+        t += DT
+    for _ in range(3):  # gone for a moment...
+        state.update(_no_face(), (1280, 720), DT, t)
+        t += DT
+    steps, last = [], state.head.copy()
+    for _ in range(round(2 * EASE_BACK / DT)):  # ...and back turned 0.5 rad
+        state.update(_result(points, _turned(matrix, 0.5)), (1280, 720), DT, t)
+        steps.append(np.linalg.norm(state.head - last))
+        last, t = state.head.copy(), t + DT
+    assert max(steps) < 0.5 * 0.6  # no single frame takes most of the turn
+    assert abs(np.linalg.norm(state.head) - 0.5) < 0.02  # and it gets there

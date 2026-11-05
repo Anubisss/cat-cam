@@ -90,6 +90,11 @@ EXPRESSIVE = [
     "browOuterUpRight", "eyeBlinkLeft", "eyeBlinkRight", "cheekPuff",
 ]
 RELAXED_BELOW = 0.25
+# Losing your face (a hand in front of it, turning away, bad light), the
+# animal keeps its last pose for KEEP_POSE s, then relaxes toward rest (facing
+# the viewer, eyes open, a neutral face) over about RELAX s. When your face is
+# back it eases from where it was to you over EASE_BACK s instead of jumping.
+KEEP_POSE, RELAX, EASE_BACK = 0.5, 1.0, 0.3
 NO_FACE_HINT_AFTER = 1.0  # s without a face before the preview says so
 WEBCAM_TIMEOUT = 5.0  # s of failed webcam reads before giving up
 FIRST_FRAME_TIMEOUT = 60.0
@@ -197,6 +202,8 @@ class FaceState:
         self.offsets = np.zeros((478, 3))  # in face widths
         self.face = None  # last seen face landmarks in px
         self.last_seen = None
+        self.missing_for = 0.0  # s since the face was last seen
+        self.easing = None  # (head, offsets, blink, s since) shown when the face came back
         # The last frame's head, offsets and blink before smoothing (for tools/tracking_eval.py).
         self.measured = (self.head, self.offsets, self.blink)
 
@@ -207,10 +214,17 @@ class FaceState:
 
     def update(self, result, cam_size, dt: float, now: float, talking: bool = False):
         """result: the face tracker's; talking: whether you are speaking (see catcam.voice)."""
-        if not result.face_landmarks:  # no face -> keep the last pose and expression
+        if not result.face_landmarks:
+            self._without_face(dt)
             self.ears = self.ear_motion.update(None, dt, now)
             self.idle.update(self.head, None, talking, dt, now)
             return
+        if self.missing_for > 0 and self.last_seen is not None:
+            # Back after a while: start the filters afresh and ease over from what was shown.
+            self.rotation_filter.reset()
+            self.expression_filter.reset()
+            self.easing = (self.head, self.offsets, self.blink, 0.0)
+        self.missing_for = 0.0
         self.face = landmarks_px(result.face_landmarks[0], *cam_size)
         self.last_seen = now
         matrix = result.facial_transformation_matrixes[0]
@@ -232,7 +246,29 @@ class FaceState:
         offsets = EXPRESSION_GAIN * self.transfer(self.face, relaxed)
         self.offsets = self.expression_filter(offsets, dt)
         self.measured = (head, offsets, closed)
+        if self.easing is not None:
+            self._ease_back(dt)
         self.idle.update(self.head, scores, talking, dt, now)
+
+    def _without_face(self, dt: float):
+        """Keep the last pose for a moment, then relax toward rest. The eyes open
+        at once: lids left half shut while nothing is tracked look broken."""
+        self.missing_for += dt
+        self.blink = self.blink * np.exp(-dt / BLINK_OPEN)
+        if self.missing_for > KEEP_POSE:
+            keep = np.exp(-dt / RELAX)
+            self.head, self.offsets = keep * self.head, keep * self.offsets
+
+    def _ease_back(self, dt: float):
+        """Blend from what was shown when the face came back to the live pose."""
+        head, offsets, blink, since = self.easing
+        since += dt
+        t = min(since / EASE_BACK, 1.0)
+        live = t * t * (3 - 2 * t)  # eases in and out
+        self.head = head + live * (self.head - head)
+        self.offsets = offsets + live * (self.offsets - offsets)
+        self.blink = blink + live * (self.blink - blink)
+        self.easing = (head, offsets, blink, since) if t < 1 else None
 
 
 def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | None,
