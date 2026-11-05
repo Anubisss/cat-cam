@@ -339,7 +339,9 @@ class Head3D:
         # from there, so a closed mouth shows no gap.
         half_gap = (self.landmarks[LOWER_INNER_LIP] - self.landmarks[UPPER_INNER_LIP]) / 2
         self.lips_meet = np.vstack([half_gap, -half_gap[::-1]])
-        parts = mouth3d.build(flat.lip_tint, cavity=not self.own_mouth)
+        # Cat teeth unless the head says it is another animal (head3d_import --animal).
+        animal = str(mesh["animal"]) if "animal" in mesh.files else "cat"
+        parts = mouth3d.build(flat.lip_tint, cavity=not self.own_mouth, animal=animal)
         self.mouth_prog = ctx.program(vertex_shader=MOUTH_VERTEX_SHADER,
                                       fragment_shader=MOUTH_FRAGMENT_SHADER)
         self.mouth_prog["clip"].value = not self.own_mouth

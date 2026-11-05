@@ -239,7 +239,9 @@ These constants sit at the top of their files:
    has its lower jaw found and cut free when it is imported: it grows over the
    model from the lower lip, the upper face from the upper lip, and they meet
    in the slit between the lips (`catcam/head3d_import.py`). The jaw then swings
-   about its hinge as far as your lower lip drops.
+   about its hinge as far as your lower lip drops, showing teeth, gums, a
+   palate and a tongue modelled in Blender, a cat's or a dog's
+   (`catcam/mouth3d.py`, `tools/mouth_model.py`).
 7. While you are still and quiet, `catcam/idle.py` adds breathing, a sway and
    glances to the head. A background picture or video goes wherever the
    animal isn't (`catcam/background.py`).
@@ -286,12 +288,13 @@ catcam/
   landmark_fit.py  finds a cat's face points (used by prepare)
   head3d.py        3D heads, behind the 3D head switch
   glass.py         the window's glass panels, switches and text
-  mouth3d.py       a 3D head's teeth, tongue and jaw
+  mouth3d.py       a 3D head's teeth, tongue and jaw (sets made by tools/mouth_model.py)
   head3d_import.py turns a generated .glb head into a cat's 3D head
 all_cats/          source portraits
 assets/cats/       prepared cats (cutout + face points, 3D heads), used at runtime
+assets/mouth/      3D teeth, gums, palate and tongue, a cat's and a dog's
 docs/3d-heads.md   how to make a 3D head
-tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet
+tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet, the mouth model
 models/            MediaPipe face and hand models
 packaging/         the standalone macOS app: PyInstaller spec, icon, build script
 ```

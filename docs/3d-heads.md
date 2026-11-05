@@ -176,17 +176,30 @@ The knobs are at the top of `catcam/head3d_import.py`:
 it is generated. When the app loads a 3D head it does three things:
 - **Lip cut:** it splits the lips along the cat's mouth line, so they can
   part.
-- **Inside of the mouth:** `catcam/mouth3d.py` builds a mouth in real
-  geometry: incisors, fangs and premolars; gums; a grooved tongue; and a
-  dark mouth cavity that fades toward the throat. The gums and tongue take
-  on the cat's own lip colour.
+- **Inside of the mouth:** `catcam/mouth3d.py` puts a mouth in real
+  geometry inside: incisors, fangs, premolars and the cheek teeth behind them;
+  the gums they sit in; a palate with its ridges; a tongue with a groove down
+  its middle; and a dark mouth cavity that fades toward the throat. The gums,
+  palate and tongue take on the cat's own lip colour.
 - **Jaw:** the lower teeth and tongue sit on a jaw that swings open about a
   hinge behind the mouth and stays with the lower lip. The mouth is only
   drawn through the lip opening, so it can't show through the cheeks or chin.
 
-The mouth is the same for every cat, sized to its lips. To change it, edit
-the constants at the top of `mouth3d.py`, in mouth widths: tooth sizes and
-positions, the tongue, the hinge, and the colours.
+The teeth, gums, palate and tongue are modelled in Blender, one set for cats
+and one for dogs (`assets/mouth/cat.npz`, `dog.npz`), and sized to each
+head's lips. Cats get the cat set unless the head says otherwise: import it
+with `--animal dog` for a dog's teeth. To change a set, edit the constants at
+the top of `tools/mouth_model.py` (in mouth widths: each tooth's size and
+place, the gums, the palate's ridges, the tongue, the colours) and run it in
+Blender without its window; it rewrites both sets, and `--preview DIR` also
+renders each from the front, the side and from below:
+
+```sh
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+    --python tools/mouth_model.py -- --preview /tmp/mouth
+```
+
+The hinge and the mouth cavity are in `catcam/mouth3d.py`.
 
 **Its own mouth instead** (`--own-mouth`): the head keeps its own lips and
 inside, so no lip cut or mouth cavity is added. The import finds the head's

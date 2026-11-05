@@ -3,12 +3,13 @@ assets: the mesh, its texture with the cat's real eyes painted in from the
 portrait, and where every vertex and face landmark sits in the portrait, which
 is what lets the head take on the 2D cat's expressions.
 
-    uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name> [--own-mouth]
+    uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name> [--own-mouth] [--animal dog]
 
 --own-mouth keeps the head's own mouth: no lips or mouth cavity are added. The
 import finds the head's own lower jaw instead and cuts it free along the slit
 between its lips, so it can swing open there, with teeth and a tongue inside
-(see catcam.mouth3d).
+(see catcam.mouth3d). --animal dog gives it a dog's teeth and tongue instead of
+a cat's.
 """
 
 import argparse
@@ -24,6 +25,7 @@ from scipy.spatial import cKDTree
 from catcam import cats
 from catcam.cat_face import EYES
 from catcam.head3d import files
+from catcam.mouth3d import ANIMALS
 
 YAW_SEARCH = np.arange(-15, 16, 3)  # degrees around face-on tried when fitting the camera
 PITCH_SEARCH = np.arange(-12, 13, 3)
@@ -389,7 +391,7 @@ def find_slit(points, opens, cam: "FrontCamera", face_model):
     return slit[middle][np.argmax(q[middle, 2])], width
 
 
-def import_glb(glb: str, name: str, own_mouth: bool = False):
+def import_glb(glb: str, name: str, own_mouth: bool = False, animal: str = "cat"):
     import trimesh  # only needed here
 
     mesh = trimesh.load(glb, force="mesh")
@@ -442,7 +444,7 @@ def import_glb(glb: str, name: str, own_mouth: bool = False):
         photo_px=photo_px.astype("f4"), landmarks=landmarks.astype("f4"),
         cam_rot=cam.rot.astype("f4"), cam_scale=np.float32(cam.scale),
         eye_index=eye_index, eye_px=eye_px.astype("f4"), eye_weight=eye_weight.astype("f4"),
-        own_mouth=own_mouth, jaw_weight=jaw, **slit)
+        own_mouth=own_mouth, jaw_weight=jaw, animal=animal, **slit)
     cv2.imwrite(str(texture_file), texture)
     print(f"  {len(vertices)} vertices, {len(eye_index)} eye texels -> {mesh_file.parent}")
 
@@ -453,5 +455,6 @@ if __name__ == "__main__":
     parser.add_argument("name", help="the cat, as in all_cats/<Name>.png")
     parser.add_argument("--own-mouth", action="store_true",
                         help="keep the head's own lips and inside, and cut its own jaw free")
+    parser.add_argument("--animal", choices=ANIMALS, default="cat", help="whose teeth and tongue it gets")
     args = parser.parse_args()
-    import_glb(args.glb, args.name, args.own_mouth)
+    import_glb(args.glb, args.name, args.own_mouth, args.animal)

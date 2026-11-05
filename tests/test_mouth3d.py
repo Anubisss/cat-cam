@@ -1,0 +1,43 @@
+import numpy as np
+import pytest
+
+from catcam import mouth3d
+
+
+@pytest.mark.parametrize("animal", mouth3d.ANIMALS)
+def test_a_modelled_mouth_has_both_halves(animal):
+    parts = mouth3d.build(np.ones(3), cavity=False, animal=animal)
+    n = len(parts.pos)
+    assert parts.normal.shape == parts.colour.shape == (n, 3)
+    assert len(parts.jaw) == len(parts.light) == n
+    assert parts.faces.min() >= 0 and parts.faces.max() < n
+    # Upper teeth, gum and palate on the skull, the rest on the jaw, nothing in between.
+    assert set(np.unique(parts.jaw)) == {0.0, 1.0}
+    skull, jaw = parts.pos[parts.jaw == 0], parts.pos[parts.jaw == 1]
+    assert skull[:, 1].mean() > jaw[:, 1].mean()
+    # A few thousand triangles, inside the mouth: within its width, behind the lips.
+    assert 1000 < len(parts.faces) < 10000
+    assert np.abs(parts.pos[:, 0]).max() < 0.6
+    assert parts.pos[:, 2].max() < 0.05 and parts.pos[:, 2].min() > -1.2
+    assert np.abs(parts.pos[:, 1]).max() < 0.4
+    assert np.allclose(np.linalg.norm(parts.normal, axis=1), 1, atol=0.01)
+    assert np.all((parts.colour >= 0) & (parts.colour <= 1)) and np.all(parts.light > 0)
+
+
+def test_the_lip_colour_tints_the_soft_parts_not_the_teeth():
+    plain = mouth3d.build(np.ones(3), cavity=False)
+    red = mouth3d.build(np.array([1.6, 0.7, 0.7]), cavity=False)
+    changed = np.any(np.abs(red.colour - plain.colour) > 1e-6, axis=1)
+    assert 0 < changed.mean() < 1  # gums, palate and tongue; the teeth stay white
+    assert np.all(red.colour[changed, 0] > plain.colour[changed, 0])
+
+
+def test_the_cavity_is_only_added_when_asked():
+    without = mouth3d.build(np.ones(3), cavity=False)
+    with_cavity = mouth3d.build(np.ones(3), cavity=True)
+    assert len(with_cavity.pos) > len(without.pos)
+
+
+def test_dogs_and_cats_differ():
+    cat, dog = (mouth3d.build(np.ones(3), cavity=False, animal=a) for a in ("cat", "dog"))
+    assert cat.pos.shape != dog.pos.shape or not np.allclose(cat.pos, dog.pos)

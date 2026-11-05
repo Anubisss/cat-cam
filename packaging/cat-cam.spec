@@ -10,6 +10,7 @@ VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["versi
 datas = [
     (str(ROOT / "models"), "models"),
     (str(ROOT / "assets" / "cats"), "assets/cats"),
+    (str(ROOT / "assets" / "mouth"), "assets/mouth"),
     (str(ROOT / "catcam" / "data"), "catcam/data"),
     *collect_data_files("mediapipe"),
     *collect_data_files("_sounddevice_data"),  # PortAudio
