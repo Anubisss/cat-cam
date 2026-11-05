@@ -130,11 +130,19 @@ comes out as a bark, as loud and as high or low as you said it. When you sit
 still and quiet for a few seconds, he breathes, sways and looks around on his
 own, until you move or talk again.
 
+Press `1` to `8` (in the Cat Cam window, while the picker is closed) for an
+emoji reaction beside your animal, which the call sees too: 1 🫵 points at
+the viewer, 2 🙌, 3 🙏, 4 👎, 5 👏, 6 🤌, 7 🤚 and 8 👋 waves. Each moves
+the way its gesture does and is gone after a couple of seconds; press it
+again to start it over. They are drawn with the Mac's own emoji font, so
+without it (not a Mac) the keys do nothing.
+
 ### Keys (in the Cat Cam window)
 
 | Key        | What it does                                              |
 |------------|-----------------------------------------------------------|
-| `1`, `2`, ... | switch cat, when there are several                     |
+| `1`, `2`, ... | in the picker: pick that cat                            |
+| `1` to `8` | in the call: an emoji reaction (see above)                |
 | `c`        | open the cat picker (the call keeps showing your cat)     |
 | `Esc`      | close the picker                                          |
 | `t`        | tail on/off (same as the Tail switch)                     |
@@ -217,6 +225,7 @@ These constants sit at the top of their files:
 | `JAW_HINGE`, `OWN_JAW_MAX` | `catcam/head3d.py` | where a 3D head's own jaw swings from, and how far it opens |
 | `STILL_AFTER`, `BREATHING`, `SWAY`, `LOOK` | `catcam/idle.py` | how long you must be still before he acts on his own, his breathing, his sway, and how far he looks around |
 | `ABOVE_NOISE`, `MIN_GAP`, `PITCH_FOLLOW` | `catcam/voice.py` | how loud you must talk to bark, the shortest time between barks, and how much the bark's pitch follows yours |
+| `SIZE`, `CENTRE`, `DURATION` | `catcam/reactions.py` | how big the emoji reactions are, where they sit and how long they stay |
 
 ## How it works
 
@@ -248,7 +257,8 @@ These constants sit at the top of their files:
    (`catcam/mouth3d.py`, `tools/mouth_model.py`).
 7. While you are still and quiet, `catcam/idle.py` adds breathing, a sway and
    glances to the head. A background picture or video goes wherever the
-   animal isn't (`catcam/background.py`).
+   animal isn't (`catcam/background.py`). Emoji reactions are drawn on
+   top, from the Mac's emoji font (`catcam/reactions.py`).
 8. The frame goes to the OBS virtual camera through pyvirtualcam. Your
    microphone goes through `catcam/voice.py`, which finds the syllables in
    your loudness and plays a bark for each, out to the BlackHole virtual
@@ -285,6 +295,7 @@ catcam/
   idle.py          what the animal does by itself while you are still
   voice.py         your voice as barks, out to the virtual microphone
   background.py    a picture or video behind the animal
+  reactions.py     emoji reactions on the number keys
   paws.py          paws
   tail.py          the tail: a chain of points simulated like a real tail
   paw_photos.py    turns paw photos into paw sprites (used by prepare)

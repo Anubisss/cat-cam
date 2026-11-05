@@ -47,6 +47,7 @@ from catcam.paths import FACE_MODEL, HAND_MODEL, LOG_FILE
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker
+from catcam.reactions import Reactions, reaction_for
 from catcam.tail import Tail, TailHand, TailSkin, tail_skin
 from catcam.voice import VirtualMic, Voice
 
@@ -60,7 +61,7 @@ TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"), ("background", "Ba
 PILL = (16, 16, 44)  # the pill's x, y and height (preview px)
 CAPSULE = (44, 16)  # the bottom capsule's height and its gap to the window's edge
 # Keys shown in the bottom capsule (the switches show their own).
-KEY_HINTS = (("c", "Change cat"), ("n", "Neutral face"), ("q", "Quit"))
+KEY_HINTS = (("c", "Change cat"), ("1-8", "Reactions"), ("n", "Neutral face"), ("q", "Quit"))
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.5  # 0..1, higher = snappier; soften small tracking changes
@@ -280,7 +281,8 @@ def _capsule(view: np.ndarray, name: str):
     w, h = PREVIEW_SIZE
     height, gap = CAPSULE
     name_w = glass.text_width(name, 17, 600, "rounded")
-    hint_w = [20 + 8 + glass.text_width(label, 14) for _, label in KEY_HINTS]
+    hint_w = [max(20, glass.text_width(key, 12, 600) + 10) + 8 + glass.text_width(label, 14)
+              for key, label in KEY_HINTS]  # keycap (as wide as glass.keycap makes it), gap, label
     width = 22 + name_w + 18 + 1 + 18 + sum(hint_w) + 18 * (len(KEY_HINTS) - 1) + 22
     x, y = (w - width) // 2, h - gap - height
     glass.panel(view, x, y, width, height, height // 2)
@@ -289,8 +291,8 @@ def _capsule(view: np.ndarray, name: str):
     glass.paint(view, np.ones((height - 20, 1), np.float32), divider, y + 10, glass.WHITE, 0.3)
     hx = divider + 1 + 18
     for (key, label), hw in zip(KEY_HINTS, hint_w):
-        glass.keycap(view, hx, y + (height - 20) // 2, key)
-        glass.text(view, label, hx + 28, y + height / 2 + 5, 14, glass.MUTED)
+        cap_w = glass.keycap(view, hx, y + (height - 20) // 2, key)
+        glass.text(view, label, hx + cap_w + 8, y + height / 2 + 5, 14, glass.MUTED)
         hx += hw + 18
 
 
@@ -419,14 +421,22 @@ class Controls:
         self.head3d = True  # the 3D head switch
         self.background = False  # the background switch
         self.has_head3d = True  # whether the current cat has a 3D head (its switch shows)
+        self.reaction = None  # a reaction asked for by its number key, see take_reaction
         self.quit = False
 
+    def take_reaction(self) -> str | None:
+        """The reaction asked for since the last take, if any."""
+        reaction, self.reaction = self.reaction, None
+        return reaction
+
     def handle(self, key: int, state: FaceState):
+        """Number keys pick a cat in the picker, and are reactions in the call."""
         if key == ord("q"):
             self.quit = True
             return
-        choice = self.picker.key_choice(key)
+        choice = None
         if self.picking:
+            choice = self.picker.key_choice(key)
             if key == ENTER and self.picker.hover is not None:
                 choice = self.picker.hover
             clicked = self.mouse.take_click()
@@ -448,6 +458,7 @@ class Controls:
                 self.picker.hover = None
             elif key == ord("n"):
                 state.reset_neutral()
+            self.reaction = reaction_for(key) or self.reaction
         if choice is not None:
             self.current, self.picking, self.picked_once = choice, False, True
 
@@ -472,7 +483,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
            background: Background | None = None):
     face_tracker, hand_tracker = trackers
     state, paws, tail, tail_hands = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), TailHand()
-    chooser = Chooser()
+    chooser, reactions = Chooser(), Reactions()
     controls.background = background is not None
     start = last = time.monotonic()
     notice_until = 0.0
@@ -500,6 +511,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
         special = effects.update(now, cat.name)
         picture = background.frame(now) if background is not None else None
         out = special if special is not None else render(cat, state, paws, tail, tail_hand, picture)
+        out = reactions.draw(out, now)
         vcam.send(out)
         if controls.picking:
             cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None, out))
@@ -513,6 +525,8 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
         if effects.needs_permission(key, now):
             notice_until = now + 10
         controls.handle(key, state)
+        if (reaction := controls.take_reaction()) is not None:
+            reactions.play(reaction, now)
         if controls.quit or window_closed():
             return
 

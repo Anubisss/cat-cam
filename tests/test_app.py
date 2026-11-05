@@ -81,8 +81,12 @@ def test_controls_change_cat_and_go_back():
     assert controls.picking
     controls.handle(ESC, state)
     assert not controls.picking and controls.current == 0
-    controls.handle(ord("3"), state)  # number keys work in the call too
-    assert controls.current == 2
+    controls.handle(ord("3"), state)  # in the call, number keys are reactions
+    assert controls.current == 0 and controls.take_reaction() == "pray"
+    assert controls.take_reaction() is None  # taken once
+    controls.handle(ord("c"), state)
+    controls.handle(ord("3"), state)  # in the picker, they pick a cat
+    assert controls.current == 2 and controls.take_reaction() is None
 
 
 def test_controls_click_and_enter():

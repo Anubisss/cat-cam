@@ -27,7 +27,9 @@ an image and check them, as the tests only catch holes and gross errors.
 - `catcam/voice.py`: your microphone as the animal's sounds (barks per
   syllable), out to the BlackHole virtual microphone. `idle.py`: what the
   animal does by itself while you are still. `background.py`: a picture or
-  video behind the animal.
+  video behind the animal. `reactions.py`: emoji reactions on the number
+  keys, drawn from the Mac's emoji font at runtime (never commit Apple's
+  emoji pictures).
 - `catcam/cat_mesh.py`: the 3D head mesh, its shaders and the drawn mouth;
   `mouth_fit.py`, `ears.py` and `lighting.py` feed into it.
 - `catcam/cat_face.py`: eyelids. `face_motion.py`: expression transfer.

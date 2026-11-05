@@ -48,6 +48,11 @@ USE
   hears a bark for every syllable you say, never your voice.
 - Sit still and quiet for a few seconds and your animal breathes and looks
   around on its own.
+- Press 1 to 8 in the Cat Cam window for an emoji reaction next to your
+  animal, which the call sees for a couple of seconds: 1 points at the
+  viewer, 2 raises both hands, 3 folds them, 4 is a thumbs down, 5 claps,
+  6 pinches the fingers, 7 raises a hand and 8 waves. (In the cat picker,
+  the numbers pick a cat instead.)
 - In the Cat Cam window: C picks another cat, Q quits.
 
 TROUBLE?
