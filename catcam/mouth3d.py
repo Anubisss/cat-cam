@@ -18,15 +18,17 @@ ARCH_FRONT, ARCH_BACK, ARCH_HALF = -0.06, -0.36, 0.38  # dental arch: z at the f
 UPPER_GUM_Y, LOWER_GUM_Y = 0.02, -0.03  # where the teeth come out of the gums
 # Teeth from the middle outward: (x along the arch, base radius, length, tip radius as a
 # share of the base: blunt incisors, pointed fangs); mirrored left/right.
-UPPER_TEETH = [(0.03, 0.022, 0.045, 0.6), (0.075, 0.022, 0.045, 0.6), (0.12, 0.024, 0.05, 0.55),
+UPPER_TEETH = [(0.035, 0.026, 0.06, 0.6), (0.085, 0.026, 0.06, 0.6), (0.135, 0.028, 0.065, 0.55),
                (0.24, 0.06, 0.26, 0.05), (0.33, 0.045, 0.08, 0.25)]
-LOWER_TEETH = [(0.025, 0.018, 0.035, 0.6), (0.065, 0.018, 0.035, 0.6), (0.105, 0.02, 0.04, 0.55),
+LOWER_TEETH = [(0.03, 0.022, 0.045, 0.6), (0.075, 0.022, 0.045, 0.6), (0.12, 0.024, 0.05, 0.55),
                (0.2, 0.05, 0.19, 0.05), (0.29, 0.04, 0.06, 0.25)]
 FANG_CURVE = 0.25  # fang tips bend back by this share of their length
-TONGUE = ((0.0, -0.11, -0.3), (0.24, 0.06, 0.28))  # centre, radii
+# Centre, radii: long, flat, lying on the jaw's floor behind the lower front teeth.
+TONGUE = ((0.0, -0.15, -0.4), (0.23, 0.045, 0.3))
+TONGUE_GROOVE = (0.012, 0.045)  # the dip down its middle: depth, half width
 # Centre, radii; only its back half is built. Wider than the mouth so it fills the corners:
 # Head3D only shows the mouth through the lips, so it can't poke out through the cheeks.
-CAVITY = ((0.0, -0.04, -0.3), (0.62, 0.42, 0.45))
+CAVITY = ((0.0, -0.08, -0.35), (0.9, 0.5, 0.5))
 CAVITY_FRONT = -0.03  # the cavity's open rim, just behind the lips
 
 # Colours (RGB 0..1). Gums, tongue and cavity are tinted by the cat's lip colour.
@@ -35,7 +37,8 @@ ENAMEL_ROOT = (0.78, 0.72, 0.6)
 GUM = (0.55, 0.28, 0.3)
 TONGUE_COLOUR = (0.64, 0.32, 0.35)
 CAVITY_COLOUR = (0.32, 0.1, 0.11)
-THROAT = 0.25  # the cavity darkens to this at its back
+THROAT = 0.15  # the cavity darkens to this at its back
+ENAMEL_LIGHT = 1.3  # teeth catch more light than the soft tissue around them
 
 
 class Parts(NamedTuple):
@@ -99,7 +102,8 @@ def _tooth(x: float, radius: float, length: float, tip: float, upper: bool) -> P
     if not upper:
         faces = faces[:, [0, 2, 1]]
     n = len(pos)
-    return Parts(pos, normal, np.array(colour), np.full(n, 0.0 if upper else 1.0), np.full(n, 1.0), faces)
+    jaw = np.full(n, 0.0 if upper else 1.0)
+    return Parts(pos, normal, np.array(colour), jaw, np.full(n, ENAMEL_LIGHT), faces)
 
 
 def _gum(upper: bool, tint: np.ndarray) -> Parts:
@@ -150,7 +154,10 @@ def build(tint) -> Parts:
         light=lambda pos: 1 - (1 - THROAT) * depth(pos), inward=True)
     tongue = _ellipsoid(
         TONGUE[0], TONGUE[1], keep=lambda unit: unit[:, 1] > -0.3,
-        colour=lambda pos: np.tile(np.multiply(TONGUE_COLOUR, tint), (len(pos), 1)),
+        colour=lambda pos: np.tile(np.multiply(TONGUE_COLOUR, (1 + tint) / 2), (len(pos), 1)),
         jaw=lambda pos: np.ones(len(pos)),
-        light=lambda pos: 1 - 0.5 * np.clip((ARCH_FRONT - pos[:, 2]) / 0.6, 0, 1))
+        light=lambda pos: 1 - 0.65 * np.clip((ARCH_FRONT - pos[:, 2]) / 0.6, 0, 1))
+    top = tongue.pos[:, 1] > TONGUE[0][1]
+    depth, half = TONGUE_GROOVE
+    tongue.pos[top, 1] -= depth * np.exp(-((tongue.pos[top, 0] / half) ** 2))
     return _merge(teeth + [_gum(True, tint), _gum(False, tint), tongue, cavity])
