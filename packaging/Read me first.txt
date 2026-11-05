@@ -1,0 +1,43 @@
+CAT CAM - be a cat in your video calls
+=======================================
+
+INSTALL (once)
+
+1. Drag "Cat Cam" onto the "Applications" folder in this window.
+
+2. Install OBS Studio from https://obsproject.com (it provides the virtual
+   camera Cat Cam sends your cat to). Then, once:
+   - Open OBS and click "Start Virtual Camera".
+   - If macOS asks, allow the system extension (System Settings >
+     General > Login Items & Extensions).
+   - Click "Stop Virtual Camera" and quit OBS.
+   Keep OBS closed while you use Cat Cam.
+
+3. Open Cat Cam from Applications. The first time, macOS says it can't
+   check the app (it isn't from the App Store). Click "Done", then open
+   System Settings > Privacy & Security, scroll down, click "Open Anyway"
+   next to Cat Cam, and confirm. You only do this once.
+
+4. Allow camera access when macOS asks.
+
+5. A few keyboard shortcuts also work while Zoom is in front. For those,
+   open System Settings > Privacy & Security > Input Monitoring and switch
+   on Cat Cam (if it isn't listed, click + and choose Cat Cam from
+   Applications). Then quit Cat Cam and open it again.
+
+USE
+
+- Open Cat Cam and click a cat (or press 1 to 6).
+- In Zoom: Settings > Video > Camera > "OBS Virtual Camera". If it isn't
+  listed, restart Zoom while Cat Cam is open.
+- Keep a relaxed face for the first second. If the cat looks grumpy or
+  turned while you are relaxed, press N.
+- Raise your hands into view for paws.
+- In the Cat Cam window: C picks another cat, Q quits.
+
+TROUBLE?
+
+- Black picture in Zoom: OBS is running. Quit OBS and reopen Cat Cam.
+- "Cannot open webcam": allow Cat Cam under System Settings > Privacy &
+  Security > Camera.
+- Errors are also written to ~/Library/Logs/Cat Cam.log

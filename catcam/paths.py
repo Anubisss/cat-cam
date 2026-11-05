@@ -9,3 +9,4 @@ FACE_MODEL = ROOT / "models" / "face_landmarker.task"
 HAND_MODEL = ROOT / "models" / "hand_landmarker.task"
 FACE_MIRROR = Path(__file__).resolve().parent / "data" / "face_mirror.npy"
 FX_FILE = Path(__file__).resolve().parent / "data" / "fx.bin"  # optional, see catcam.fx
+LOG_FILE = Path.home() / "Library" / "Logs" / "Cat Cam.log"  # errors of the standalone app

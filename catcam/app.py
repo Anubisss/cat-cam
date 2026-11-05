@@ -12,8 +12,10 @@ Keys in the preview window: c = change cat, n = "this is my neutral face"
 """
 
 import argparse
+import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 
 import cv2
@@ -30,7 +32,7 @@ from catcam.face_motion import ExpressionTransfer
 from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
 from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
-from catcam.paths import FACE_MODEL, HAND_MODEL
+from catcam.paths import FACE_MODEL, HAND_MODEL, LOG_FILE
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker, put_text
@@ -231,7 +233,7 @@ def open_webcam(index: int):
             return webcam
         webcam.release()
         time.sleep(1)
-    sys.exit(f"Cannot open webcam {index}. Grant camera access to your terminal in "
+    sys.exit(f"Cannot open webcam {index}. Grant camera access to {terminal_name()} in "
              "System Settings > Privacy & Security > Camera, or pick another one with --camera.")
 
 
@@ -273,6 +275,8 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Cat face filter for Zoom.")
     parser.add_argument("--camera", type=int, default=0, metavar="N",
                         help="webcam to use (default 0; try 1 if the wrong camera opens)")
+    parser.add_argument("--check", action="store_true",
+                        help="load and draw every cat once, without camera, then quit")
     return parser.parse_args(argv)
 
 
@@ -330,8 +334,9 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
     start = last = time.monotonic()
     notice_until = 0.0
     app = terminal_name()
+    restart = "quit Cat Cam and open it again" if app == "Cat Cam" else f"quit and reopen {app}"
     notice = [f"Allow {app} under Input Monitoring (opened in System Settings),",
-              f"then quit and reopen {app} and start Cat Cam again."]
+              f"then {restart}" + ("." if app == "Cat Cam" else " and start Cat Cam again.")]
     for frame, now in frames(webcam):
         dt, last = max(now - last, 1e-3), now
         cam_size = (frame.shape[1], frame.shape[0])
@@ -360,11 +365,49 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
             return
 
 
+def check(cats: list[Cat]):
+    """Draws every cat once at rest, with paws, as a quick test of the install."""
+    for cat in cats:
+        out = render(cat, FaceState(), Paws(OUT_W))
+        if out.shape != (OUT_H, OUT_W, 3) or not out.any():
+            sys.exit(f"Drawing {cat.name} failed.")
+    load_effects()  # its data file must load too
+    import sounddevice  # noqa: F401  (imported only when needed, so check here they're there)
+    if sys.platform == "darwin":
+        import Quartz  # noqa: F401
+    print(f"OK: {len(cats)} cats")
+
+
+def alert(message: str):
+    """A dialog for the standalone app, which has no terminal to print to."""
+    quoted = message.replace("\\", "\\\\").replace('"', '\\"')
+    subprocess.run(["osascript", "-e", f'display alert "Cat Cam" message "{quoted}"'], check=False)
+
+
 def main(argv=None):
+    """Runs Cat Cam; the standalone app shows errors in a dialog and a log file."""
+    if not getattr(sys, "frozen", False):
+        return run(argv)
+    try:
+        return run(argv)
+    except SystemExit as e:
+        if isinstance(e.code, str):
+            alert(e.code)
+        raise
+    except Exception:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LOG_FILE.write_text(traceback.format_exc())
+        alert(f"Cat Cam stopped because of an error. Details are in {LOG_FILE}.")
+        raise
+
+
+def run(argv=None):
     args = parse_args(argv)
     print("Loading cats...")
     renderer = Renderer((OUT_W, OUT_H))
     cats = load_cats(renderer)
+    if args.check:
+        return check(cats)
     picker = Picker([(c.name, c.sprite, c.background) for c in cats])
     trackers = create_trackers()
     vcam = open_virtual_camera()

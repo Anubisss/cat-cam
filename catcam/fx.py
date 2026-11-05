@@ -118,7 +118,7 @@ def full_frame(picture: np.ndarray, size: tuple[int, int]) -> np.ndarray:
 
 
 # macOS only lets an app see keys typed into other apps with Input Monitoring,
-# granted to the terminal app Cat Cam runs in.
+# granted to the terminal app Cat Cam runs in (or to the Cat Cam app itself).
 INPUT_MONITORING = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
 TERMINALS = {"WarpTerminal": "Warp", "Apple_Terminal": "Terminal", "iTerm.app": "iTerm",
              "vscode": "Visual Studio Code", "ghostty": "Ghostty"}
@@ -126,6 +126,9 @@ SETTINGS_EVERY = 10.0  # s between opening System Settings again
 
 
 def terminal_name() -> str:
+    """The app macOS asks permissions for: the standalone app, or the terminal."""
+    if getattr(sys, "frozen", False):
+        return "Cat Cam"
     return TERMINALS.get(os.environ.get("TERM_PROGRAM", ""), "your terminal app")
 
 

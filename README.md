@@ -14,6 +14,16 @@ virtual camera, and everything runs locally on your computer.
 
 ![Rest, smile, and a smile with the head turned](docs/expressions.jpg)
 
+## Easy install (Mac with Apple Silicon)
+
+No programming tools needed: download **Cat-Cam-<version>.dmg** from the
+[Releases page](https://github.com/tarrcimar/cat-cam/releases), open it and
+follow *Read me first.txt* inside. In short: drag Cat Cam to Applications,
+set up OBS's virtual camera once (step 2 below), and the first time you open
+Cat Cam allow it under *System Settings → Privacy & Security → Open Anyway*.
+
+The rest of this page is for running it from the code instead.
+
 ## What you need
 
 - **macOS**. It is developed and tested on Apple Silicon. Windows should work
@@ -181,6 +191,14 @@ These constants sit at the top of their files:
 ```sh
 uv run pytest          # tests, including render checks on every cat
 uv run ruff check .    # lint
+uv run cat-cam --check # load and draw every cat once, without a camera
+```
+
+To build the standalone app and its disk image (`dist/Cat-Cam-<version>.dmg`)
+on an Apple Silicon Mac:
+
+```sh
+packaging/build_mac.sh
 ```
 
 ```
@@ -202,6 +220,7 @@ catcam/
 all_cats/          source portraits
 assets/cats/       prepared cats (cutout + face points), used at runtime
 models/            MediaPipe face and hand models
+packaging/         the standalone macOS app: PyInstaller spec, icon, build script
 ```
 
 The MediaPipe models in `models/` are by Google and licensed under Apache 2.0.

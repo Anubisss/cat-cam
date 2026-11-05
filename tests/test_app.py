@@ -132,3 +132,11 @@ def test_closed_eyes_count_as_a_blink_even_with_a_weak_score():
     weak = {"eyeBlinkLeft": 0.1, "eyeBlinkRight": 0.1}
     np.testing.assert_allclose(blinks(weak, neutral, neutral), 0)
     assert blinks(weak, shut, neutral).min() == 1.0
+
+
+@pytest.mark.gl
+def test_check_draws_every_cat_without_a_camera(capsys):
+    from catcam.app import run
+
+    run(["--check"])
+    assert capsys.readouterr().out.strip().endswith("cats")
