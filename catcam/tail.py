@@ -1,4 +1,4 @@
-"""A tail lifted by one of your hands.
+"""A tail lifted by your hand.
 
 The tail is a chain of points rooted below the screen, beside the cat's body.
 Your hand only draws its tip along; the rest follows like a real tail: it
@@ -15,9 +15,12 @@ import cv2
 import numpy as np
 from scipy.interpolate import CubicSpline
 
-from catcam.paws import photo_paw
+from catcam.paws import TRACKED, photo_paw
 
-TAIL_HAND = "Right"  # this hand moves the tail; the other one stays a paw
+# With one hand in view that hand lifts the tail; with two, both are paws. A
+# change only counts once it has lasted SWITCH_FRAMES frames, so a hand the
+# tracker sees for a moment doesn't make the tail jump.
+SWITCH_FRAMES = 5
 SEGMENTS = 24
 LENGTH = 1.2  # root to tip, in screen heights
 # The root is under the screen, beside the cat's face centre, and as deep as
@@ -45,6 +48,30 @@ HAND_GONE = 0.15  # the tail hand's presence (see Paws) below which it is gone: 
 
 SKIN_WIDTH = 64  # texture columns across the tail
 SKIN_INSET = 0.08  # of the arm width, left off each side (the photo's soft edge)
+
+
+class TailHand:
+    """Which hand ("Left", "Right" or None) lifts the tail."""
+
+    def __init__(self):
+        self.hand = None
+        self.pending, self.count = None, 0
+        self.seen = False  # was any hand in view in the last frame
+
+    def update(self, slots: dict) -> str | None:
+        """slots: Paws.slots of this frame."""
+        visible = [name for name, slot in slots.items() if "params" in slot and slot["presence"] > TRACKED]
+        wanted = visible[0] if len(visible) == 1 else None
+        if wanted == self.hand or not self.seen:  # unchanged, or hands appearing: at once
+            self.hand, self.pending, self.count = wanted, None, 0
+        elif wanted == self.pending:
+            self.count += 1
+        else:
+            self.pending, self.count = wanted, 1
+        if self.count >= SWITCH_FRAMES:
+            self.hand, self.pending, self.count = wanted, None, 0
+        self.seen = bool(visible)
+        return self.hand
 
 
 class TailSkin(NamedTuple):

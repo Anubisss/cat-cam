@@ -1,6 +1,6 @@
 import numpy as np
 
-from catcam.tail import LENGTH, SEGMENTS, Tail, TailSkin, tail_skin
+from catcam.tail import LENGTH, SEGMENTS, SWITCH_FRAMES, Tail, TailHand, TailSkin, tail_skin
 
 W, H = 1280, 720
 FACE_CENTER, FACE_WIDTH = np.array([640.0, 360.0]), 450.0
@@ -67,3 +67,41 @@ def test_tail_rides_out_a_few_frames_without_the_hand():
         presence += FADE_RATE * (0 - presence)
         tail.update(hand, presence, 1 / 30, FACE_CENTER, FACE_WIDTH)
     assert np.linalg.norm(tail.points[-1] - tip) < 10  # the tail stays up
+
+
+def _slots(*names, presence=1.0):
+    return {name: {"presence": presence, "params": np.zeros(7)} for name in names}
+
+
+def test_a_hand_alone_lifts_the_tail_at_once_either_hand():
+    for name in ("Left", "Right"):
+        chooser = TailHand()
+        assert chooser.update({}) is None
+        assert chooser.update(_slots(name, presence=0.35)) == name  # its first frame: no paw flash
+
+
+def test_two_hands_are_two_paws():
+    chooser = TailHand()
+    assert chooser.update(_slots("Left", "Right")) is None
+    chooser = TailHand()
+    chooser.update(_slots("Right"))
+    for _ in range(SWITCH_FRAMES - 1):  # a second hand comes in: not at once...
+        assert chooser.update(_slots("Left", "Right")) == "Right"
+    assert chooser.update(_slots("Left", "Right")) is None  # ...but once it stays
+
+
+def test_a_second_hand_seen_for_a_moment_leaves_the_tail_alone():
+    chooser = TailHand()
+    chooser.update(_slots("Right"))
+    chooser.update(_slots("Left", "Right"))
+    chooser.update(_slots("Left", "Right"))
+    for _ in range(10):
+        assert chooser.update(_slots("Right")) == "Right"
+
+
+def test_when_one_of_two_hands_leaves_the_other_takes_the_tail():
+    chooser = TailHand()
+    chooser.update(_slots("Left", "Right"))
+    for _ in range(SWITCH_FRAMES):
+        hand = chooser.update(_slots("Left"))
+    assert hand == "Left"

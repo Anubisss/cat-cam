@@ -92,10 +92,11 @@ at the viewer". If the cat looks grumpy or turned while you are relaxed, press
 
 Raise your hands into the camera's view for paws. Turn a hand around to
 show the other side of the paw, and make a fist to curl its toes in.
-Tick **Tail** in the top left corner of the window (or press `t`) and your
-right hand lifts the tip of the cat's tail instead of a paw: the rest of
-the tail rises from below, trails behind, curls and swishes on its own.
-Untick it to get the paw back.
+Tick **Tail** in the top left corner of the window (or press `t`) for the
+cat's tail: while only one of your hands is in view, it lifts the tip of
+the tail instead of being a paw, and the rest of the tail rises from below,
+trails behind, curls and swishes on its own. Show both hands and they are
+two paws again. Untick it for paws only.
 
 ### Keys (in the Cat Cam window)
 
@@ -162,7 +163,7 @@ These constants sit at the top of their files:
 | `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
 | `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
-| `TAIL_HAND`, `LENGTH`, `SWISH`, `DRAG` | `catcam/tail.py` | which hand moves the tail, how long it is, how much it sways by itself, and how quickly it calms down |
+| `LENGTH`, `SWISH`, `DRAG`, `SWITCH_FRAMES` | `catcam/tail.py` | how long the tail is, how much it sways by itself, how quickly it calms down, and how long a change between one and two hands must last before the tail follows |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
 
 ## How it works

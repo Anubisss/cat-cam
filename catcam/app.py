@@ -36,12 +36,13 @@ from catcam.paths import FACE_MODEL, HAND_MODEL, LOG_FILE
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker, put_text
-from catcam.tail import TAIL_HAND, Tail, TailSkin, tail_skin
+from catcam.tail import Tail, TailHand, TailSkin, tail_skin
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
 # The "Tail" checkbox in the preview's top left corner (x, y, size in preview
-# px); while it is ticked one of your hands lifts a tail instead of a paw.
+# px); while it is ticked, a hand alone in view lifts a tail instead of being a
+# paw (two hands are two paws).
 TAIL_BOX = (16, 14, 22)
 TAIL_LABEL = "Tail (t)"
 
@@ -182,15 +183,15 @@ class FaceState:
         self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
 
 
-def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_on: bool) -> np.ndarray:
-    """tail_on: the tail hand moves the tail (still sinking out of view for a
-    moment after it is switched off) instead of a paw."""
+def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | None) -> np.ndarray:
+    """tail_hand: the hand ("Left", "Right") that lifts the tail instead of
+    being a paw, if any. The tail is drawn while it sinks away, too."""
     sprite = cat.eyelids.render(blink=tuple(state.blink))
     offsets = state.transfer.to_cat(state.offsets, cat.points)
     frame = cat.mesh.render(sprite, offsets, to_matrix(state.head), state.ears)
     if cat.tail is None:
         return paws.draw(frame, cat.paw)
-    hidden = (TAIL_HAND,) if tail_on else ()
+    hidden = (tail_hand,) if tail_hand else ()
     return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=hidden)
 
 
@@ -371,7 +372,7 @@ def frames(webcam):
 
 def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam, webcam):
     face_tracker, hand_tracker = trackers
-    state, paws, tail = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H))
+    state, paws, tail, tail_hands = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), TailHand()
     start = last = time.monotonic()
     notice_until = 0.0
     app = terminal_name()
@@ -387,11 +388,12 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = cats[controls.current]
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
-        hand = paws.slots.get(TAIL_HAND, {}) if controls.tail and cat.tail is not None else {}
+        tail_hand = tail_hands.update(paws.slots) if controls.tail and cat.tail is not None else None
+        hand = paws.slots.get(tail_hand, {}) if tail_hand else {}
         tail.update(hand.get("params"), hand.get("presence", 0.0), dt, *cat.mesh.face_on_screen())
 
         special = effects.update(now, cat.name)
-        out = special if special is not None else render(cat, state, paws, tail, controls.tail)
+        out = special if special is not None else render(cat, state, paws, tail, tail_hand)
         vcam.send(out)
         if controls.picking:
             cv2.imshow(WINDOW, controls.picker.draw(controls.current if controls.picked_once else None))
@@ -410,7 +412,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
 def check(cats: list[Cat]):
     """Draws every cat once at rest, with paws, as a quick test of the install."""
     for cat in cats:
-        out = render(cat, FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), tail_on=True)
+        out = render(cat, FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), tail_hand="Right")
         if out.shape != (OUT_H, OUT_W, 3) or not out.any():
             sys.exit(f"Drawing {cat.name} failed.")
     load_effects()  # its data file must load too

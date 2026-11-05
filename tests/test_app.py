@@ -193,15 +193,15 @@ def test_tail_replaces_one_paw_only_while_on(real_cats):
     from catcam.app import FaceState, load_cats, render
     from catcam.cat_mesh import Renderer
     from catcam.paws import Paws
-    from catcam.tail import TAIL_HAND, Tail
+    from catcam.tail import Tail
 
     cat = next(c for c in load_cats(Renderer((1280, 720))) if c.name == "Dori")
     paws = Paws(1280)
-    paws.slots = {TAIL_HAND: {"presence": 1.0, "params": np.array([1100, 500, 200, 0, -1, -1, 0])}}
+    paws.slots = {"Right": {"presence": 1.0, "params": np.array([1100, 500, 200, 0, -1, -1, 0])}}
     tail = Tail((1280, 720))
     plain = cat.mesh.render(cat.sprite, np.zeros((478, 3)), np.eye(3))
     corner = np.s_[400:600, 1000:1200]  # where the paw is
-    with_paw = render(cat, FaceState(), paws, tail, tail_on=False)
-    without = render(cat, FaceState(), paws, tail, tail_on=True)
+    with_paw = render(cat, FaceState(), paws, tail, tail_hand=None)
+    without = render(cat, FaceState(), paws, tail, tail_hand="Right")
     assert np.abs(with_paw[corner].astype(int) - plain[corner]).mean() > 10
     assert np.abs(without[corner].astype(int) - plain[corner]).mean() < 1
