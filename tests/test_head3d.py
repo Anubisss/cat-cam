@@ -85,6 +85,23 @@ def test_vertices_follow_the_landmarks(box, woofgang):
     assert weight.max() > 0.5
 
 
+def test_drawn_where_shaped(box, woofgang):
+    """The vertex shader shapes the head as _shape does: the drawn box covers the
+    shaped vertices' projection."""
+    moves = np.zeros((478, 3))
+    moves[:, :2] = (40.0, -30.0)
+    frame = box.render(woofgang.sprite, moves, np.eye(3))
+    rows, cols = np.nonzero((frame != BG).any(axis=2))
+    shaped = box._shape(box.flat._steady_eyes(moves), (0.0, 0.0))
+    clip = np.column_stack([shaped + box.moved, np.ones(len(shaped))]) @ box.proj.T
+    ndc = clip[:, :2] / clip[:, 3:]
+    x, y = (ndc[:, 0] + 1) / 2 * OUT[0], (1 - ndc[:, 1]) / 2 * OUT[1]
+    assert cols.min() == pytest.approx(x.min(), abs=1.5) and cols.max() == pytest.approx(x.max(), abs=1.5)
+    assert rows.min() == pytest.approx(y.min(), abs=1.5) and rows.max() == pytest.approx(y.max(), abs=1.5)
+    rest = box.render(woofgang.sprite, np.zeros((478, 3)), np.eye(3))
+    assert cols.min() > np.nonzero((rest != BG).any(axis=2))[1].min() + 2  # it did move
+
+
 def test_own_jaw_opens_between_the_lips(woofgang):
     """Woofgang keeps his own mouth: opening it swings his jaw down and shows his dark
     inside between the lips, while everything above them stays put."""

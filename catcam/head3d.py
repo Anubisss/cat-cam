@@ -11,6 +11,8 @@ same hinges. The lips part over a real 3D mouth
 for CatMesh: same render() and face_on_screen().
 """
 
+from typing import NamedTuple
+
 import cv2
 import moderngl
 import numpy as np
@@ -53,6 +55,9 @@ OWN_JAW_MAX = 0.5
 MOUTH_BOX = 0.3  # how far round the jaw (shares of its size on screen) the head's inside may show
 OWN_MOUTH_INSIDE = (0.16, 0.06, 0.06)  # RGB of a head's own inside, seen between its parted lips
 
+# The head is shaped here, on the GPU, as Head3D._shape does it on the CPU: with a few
+# hundred thousand vertices that would take most of a frame. Each vertex follows its
+# NEAREST (= 8, two ivec4) landmarks, bends with the ears and swings with the jaw.
 VERTEX_SHADER = """
 #version 330
 uniform mat4 proj;
@@ -61,14 +66,56 @@ uniform vec3 shift;
 uniform vec3 light;
 uniform float strength;
 uniform vec2 shade_range;
-in vec3 in_pos;
+uniform sampler2D moves;  // the landmarks' movement (portrait px), one per texel
+uniform mat3 to_model;    // a movement in portrait px as one of the model
+uniform vec2 ear_hinge[2];
+uniform float ear_turn[2];  // radians, signed as each ear turns outward
+uniform mat4 jaw;           // model -> model for the head's own jaw
+uniform vec3 tie_shift;     // its move, less its turn of the upper lip's
+in vec3 in_pos;  // at rest
 in vec3 in_normal;
 in vec2 in_uv;
+in vec2 in_photo;  // where it is in the portrait (px)
+in uvec4 in_near0;
+in uvec4 in_near1;
+in vec4 in_follow0;  // how much it moves with each of those landmarks
+in vec4 in_follow1;
+in vec2 in_ear;      // how much of each ear's turn it takes
+in float in_jaw;     // how much it moves with the jaw
+in float in_tie;     // on the jaw's side of the lip cut: how far it follows the jaw from its twin
 out vec2 uv;
 out float shade;
 out vec3 normal;
+vec3 landmark(uint i, int row) {
+    return texelFetch(moves, ivec2(int(i), row), 0).xyz;
+}
 void main() {
-    gl_Position = proj * vec4(rot * in_pos + shift, 1.0);
+    vec3 move = vec3(0.0);
+    for (int k = 0; k < 4; k++)
+        move += in_follow0[k] * landmark(in_near0[k], 0) + in_follow1[k] * landmark(in_near1[k], 0);
+    // Ears turn about their hinges in the portrait (see catcam.ears.bend), one after the other.
+    vec2 here = in_photo + move.xy;
+    vec2 bent = here;
+    for (int e = 0; e < 2; e++) {
+        if (in_ear[e] > 0.0 && ear_turn[e] != 0.0) {
+            float phi = ear_turn[e] * in_ear[e];
+            float c = cos(phi), s = sin(phi);
+            vec2 rel = bent - ear_hinge[e];
+            bent = ear_hinge[e] + vec2(c * rel.x - s * rel.y, s * rel.x + c * rel.y);
+        }
+    }
+    move.xy += bent - here;
+    vec3 pos = in_pos + to_model * move;
+    if (in_jaw != 0.0) {
+        // The jaw swings rigidly, with what the lips do beyond that (see Head3D._beyond).
+        vec3 beyond = vec3(0.0);
+        for (int k = 0; k < 4; k++)
+            beyond += in_follow0[k] * landmark(in_near0[k], 1) + in_follow1[k] * landmark(in_near1[k], 1);
+        pos += in_jaw * ((jaw * vec4(in_pos + to_model * beyond, 1.0)).xyz - pos);
+    }
+    if (in_tie >= 0.0)
+        pos += in_tie * (mat3(jaw) * pos + tie_shift - pos);
+    gl_Position = proj * vec4(rot * pos + shift, 1.0);
     uv = in_uv;
     normal = rot * in_normal;
     // The texture already has the light of the photo it came from baked in; only the
@@ -252,6 +299,30 @@ def follow_weights(vertices, photo_px, landmarks, points, face_model, face_width
     return csr_matrix((weights.ravel(), (rows, nearest.ravel())), shape=(len(photo_px), len(points)))
 
 
+class _Part(NamedTuple):
+    """Some of a head's vertices, with what Head3D._shape needs to shape them."""
+    rows: np.ndarray | slice  # them, and any face-side twins they are tied to
+    follow: csr_matrix  # their rows of the follow weights
+    ears: list  # the ears, with weights for the face landmarks and these vertices only
+    face: np.ndarray  # tied twins (positions in rows): the face's side of the lip cut...
+    chin: np.ndarray  # ...and the jaw's
+    back: np.ndarray | slice  # where in rows the vertices asked for are
+
+
+def _padded(weights: csr_matrix, width: int):
+    """The (rows, width) column indices (uint16) and values (float32) of a sparse matrix
+    with at most width entries a row, padded with index 0 and weight 0."""
+    counts = np.diff(weights.indptr)
+    if counts.max(initial=0) > width:
+        raise ValueError(f"more than {width} entries in a row")
+    rows = np.repeat(np.arange(weights.shape[0]), counts)
+    slot = np.arange(weights.nnz) - np.repeat(weights.indptr[:-1], counts)
+    index = np.zeros((weights.shape[0], width), np.uint16)
+    value = np.zeros((weights.shape[0], width), np.float32)
+    index[rows, slot], value[rows, slot] = weights.indices, weights.data
+    return index, value
+
+
 def lip_seam(faces, photo_px, points, face_width, on_face) -> np.ndarray:
     """Which faces bridge the lips between the mouth corners: they give way where the
     mouth opens. on_face: which vertices are on the face (not behind it)."""
@@ -326,13 +397,37 @@ class Head3D:
         self.prog["light"].value = tuple(LIGHT @ FLIP)
         self.prog["strength"].value = STRENGTH
         self.prog["shade_range"].value = SHADE_RANGE
-        self.vbo = ctx.buffer(self.rest.astype("f4").tobytes(), dynamic=True)
+        self.prog["to_model"].write(self.to_model.astype("f4").T.tobytes())
+        self.prog["moves"].value = 2
+        self.moves = ctx.texture((len(points), 2), 3, dtype="f4")  # rows: the landmarks' moves, and _beyond
+        self.moves.filter = (moderngl.NEAREST, moderngl.NEAREST)
         face_model = face_width / float(mesh["cam_scale"])
         on_face = cKDTree(self.landmarks).query(self.rest)[0] < ON_FACE * face_model
-        attributes = [(self.vbo, "3f", "in_pos"),
-                      (ctx.buffer(mesh["normals"].astype("f4").tobytes()), "3f", "in_normal"),
-                      (ctx.buffer(mesh["uv"].astype("f4").tobytes()), "2f", "in_uv")]
         self.lip_cut = mesh["lip_cut"] if "lip_cut" in mesh.files else None
+        self.everything = self._part(slice(None))
+        near, follow = _padded(self.follow, NEAREST)
+        ear = np.zeros((len(self.rest), 2), "f4")
+        for i, e in enumerate(self.ears):
+            ear[:, i] = e.weights[self.face_count:]
+        jaw = np.zeros(len(self.rest)) if self.jaw_weight is None else self.jaw_weight[:, 0]
+        shaping = [self.rest.astype("f4"), self.photo_px.astype("f4"), near, follow, ear, jaw.astype("f4")]
+        # A vertex on the jaw's side of the lip cut is shaped as its twin on the face's side,
+        # then tied to it by its own jaw weight (-1: not tied).
+        tie = np.full(len(self.rest), -1, "f4")
+        face, chin = self.everything.face, self.everything.chin
+        if len(chin):
+            tie[chin] = jaw[chin]
+            for values in shaping:
+                values[chin] = values[face]
+        attributes = [(ctx.buffer(shaping[0]), "3f", "in_pos"),
+                      (ctx.buffer(mesh["normals"].astype("f4").tobytes()), "3f", "in_normal"),
+                      (ctx.buffer(mesh["uv"].astype("f4").tobytes()), "2f", "in_uv"),
+                      (ctx.buffer(shaping[1]), "2f", "in_photo"),
+                      (ctx.buffer(shaping[2]), "4u2 4u2", "in_near0", "in_near1"),
+                      (ctx.buffer(shaping[3]), "4f 4f", "in_follow0", "in_follow1"),
+                      (ctx.buffer(shaping[4]), "2f", "in_ear"),
+                      (ctx.buffer(shaping[5]), "1f", "in_jaw"),
+                      (ctx.buffer(tie), "1f", "in_tie")]
         if self.jaw_weight is None:
             seam = lip_seam(mesh["faces"], self.photo_px, points, face_width, on_face)
         else:  # the jaw is cut free already (see catcam.head3d_import.cut_jaw)
@@ -367,7 +462,9 @@ class Head3D:
             self.skin_fbo = ctx.framebuffer(depth_attachment=self.skin)
             self.mouth_prog["skin"].value = 1
             self.prog["skin"].value = 1
-            self.on_jaw = np.nonzero(self.jaw_weight[:, 0] > 0.5)[0]
+            self.on_jaw = self._part(np.nonzero(self.jaw_weight[:, 0] > 0.5)[0])
+        if self.lip_cut is not None and len(self.lip_cut):
+            self.cut = self._part(self.lip_cut.ravel())
         self.mouth_prog["proj"].write(self.proj.astype("f4").T.tobytes())
         self.mouth_prog["shift"].value = tuple(self.shift)
         data = np.column_stack([parts.pos, parts.normal, parts.colour, parts.jaw, parts.light]).astype("f4")
@@ -406,32 +503,78 @@ class Head3D:
         self.texture.build_mipmaps()
         self._uploaded = sprite
 
-    def _shape(self, landmark_moves: np.ndarray, ears) -> np.ndarray:
-        """Rest vertices moved by the landmarks' movement (portrait px) and the ear
-        angles, and swung open with the jaw if it is marked."""
-        moves = self.follow @ landmark_moves
+    def _part(self, rows) -> "_Part":
+        """What _shape needs to shape only the vertices at rows (an index array, or
+        slice(None) for all): with any of them on the jaw's side of the lip cut, the face
+        side's twins they are tied to as well."""
+        face = chin = np.zeros(0, int)
+        if self.lip_cut is not None and len(self.lip_cut) and self.jaw_weight is not None:
+            face, chin = self.lip_cut.T
+        if isinstance(rows, slice):
+            return _Part(rows, self.follow, self.ears, face, chin, rows)
+        tied = np.isin(chin, rows)
+        need = np.unique(np.concatenate([rows, face[tied]]))
+        face, chin = face[tied], chin[tied]
+        ears = [e._replace(weights=np.concatenate([e.weights[:self.face_count],
+                                                   e.weights[self.face_count:][need]]))
+                for e in self.ears]
+        at = lambda i: np.searchsorted(need, i)  # noqa: E731
+        return _Part(need, self.follow[need], ears, at(face), at(chin), at(rows))
+
+    def _shape(self, landmark_moves: np.ndarray, ears, part: "_Part | None" = None) -> np.ndarray:
+        """Rest vertices (all, or a _part of them) moved by the landmarks' movement
+        (portrait px) and the ear angles, and swung open with the jaw if it is marked.
+        The vertex shader does the same for drawing; this is for the few the mouth needs."""
+        part = self.everything if part is None else part
+        rows, follow = part.rows, part.follow
+        rest = self.rest[rows]
+        moves = follow @ landmark_moves
         if any(ears):
-            here = np.vstack([np.zeros((self.face_count, 2)), self.photo_px + moves[:, :2]])
-            moves[:, :2] += (bend(here, self.ears, ears) - here)[self.face_count:]
-        shaped = self.rest + moves @ self.to_model.T
+            here = np.vstack([np.zeros((self.face_count, 2)), self.photo_px[rows] + moves[:, :2]])
+            moves[:, :2] += (bend(here, part.ears, ears) - here)[self.face_count:]
+        shaped = rest + moves @ self.to_model.T
         if self.jaw_weight is None:
-            return shaped
+            return shaped[part.back]
         # The jaw swings rigidly (the chin with it), but the skin on it still does what
         # your lips do beyond that (a smile pulling the corners up and out), as the face
         # does, so the two sides of the cut between the lips stay together.
         jaw = self._own_jaw(landmark_moves)
+        beyond = follow @ self._beyond(landmark_moves, jaw)
+        swung = (rest + beyond @ self.to_model.T) @ jaw[:3, :3].T + jaw[:3, 3]
+        jaw_weight = self.jaw_weight[rows]
+        shaped = shaped + jaw_weight * (swung - shaped)
+        if len(part.face):
+            # Where they were cut apart the lips part only as far as the jaw swings.
+            face, chin = part.face, part.chin
+            turn, upper = jaw[:3, :3], landmark_moves[LIP_MIDDLE[0]] @ self.to_model.T
+            swung = shaped[face] @ turn.T + jaw[:3, 3] - upper @ turn.T
+            shaped[chin] = shaped[face] + jaw_weight[chin] * (swung - shaped[face])
+        return shaped[part.back]
+
+    def _beyond(self, landmark_moves: np.ndarray, jaw: np.ndarray) -> np.ndarray:
+        """What the landmarks do beyond swinging with the head's own jaw (portrait px)."""
         swing = (self.landmarks @ jaw[:3, :3].T + jaw[:3, 3] - self.landmarks) @ self.to_px.T
         beyond = np.where(self.rigid[:, None], 0.0, landmark_moves - swing)
         beyond[:, 1] = np.minimum(beyond[:, 1], 0)  # dropping further than the jaw goes would only stretch it
-        swung = (self.rest + (self.follow @ beyond) @ self.to_model.T) @ jaw[:3, :3].T + jaw[:3, 3]
-        shaped = shaped + self.jaw_weight * (swung - shaped)
-        if self.lip_cut is not None and len(self.lip_cut):
-            # Where they were cut apart the lips part only as far as the jaw swings.
-            face, chin = self.lip_cut.T
-            turn, upper = jaw[:3, :3], landmark_moves[LIP_MIDDLE[0]] @ self.to_model.T
-            swung = shaped[face] @ turn.T + jaw[:3, 3] - upper @ turn.T
-            shaped[chin] = shaped[face] + self.jaw_weight[chin] * (swung - shaped[face])
-        return shaped
+        return beyond
+
+    def _shape_on_gpu(self, landmark_moves: np.ndarray, ears):
+        """Hands the vertex shader what it shapes the head with this frame (see _shape)."""
+        jaw, beyond = np.eye(4), np.zeros_like(landmark_moves)
+        if self.jaw_weight is not None:
+            jaw = self._own_jaw(landmark_moves)
+            beyond = self._beyond(landmark_moves, jaw)
+            upper = landmark_moves[LIP_MIDDLE[0]] @ self.to_model.T
+            self.prog["tie_shift"].value = tuple(jaw[:3, 3] - jaw[:3, :3] @ upper)
+        self.moves.write(np.stack([landmark_moves, beyond]).astype("f4").tobytes())
+        self.moves.use(2)
+        hinges, turns = [(0.0, 0.0)] * 2, [0.0] * 2
+        for i, ear in enumerate(self.ears):
+            hinges[i] = tuple(ear.hinge)
+            turns[i] = ear.side * ears[0 if ear.side < 0 else 1]
+        self.prog["ear_hinge"].value = hinges
+        self.prog["ear_turn"].value = turns
+        self.prog["jaw"].write(jaw.astype("f4").T.tobytes())
 
     def _own_jaw(self, landmark_moves: np.ndarray) -> np.ndarray:
         """Model -> model (4x4) for the head's own jaw: turned about its hinge as far
@@ -483,11 +626,11 @@ class Head3D:
         grow = MOUTH_BOX * (hi - lo)
         return (*(lo - grow), *(hi + grow))
 
-    def _lip_gap(self, shaped: np.ndarray, model_rot: np.ndarray) -> list:
+    def _lip_gap(self, pts: np.ndarray, model_rot: np.ndarray) -> list:
         """The opening between a head's own cut lips on screen (gl_FragCoord px): the
         face's side of the cut left to right, then the jaw's back, each smoothed into
-        half of the opening's points. Closed, the two sides lie on each other."""
-        pts = shaped[self.lip_cut.ravel()]
+        half of the opening's points. Closed, the two sides lie on each other.
+        pts: the lip cut's vertices (lip_cut, raveled), shaped."""
         clip = np.column_stack([pts @ model_rot.T + self.moved, np.ones(len(pts))]) @ self.proj.T
         screen = (clip[:, :2] / clip[:, 3:] + 1) / 2 * (self.out_w, self.out_h)
         upper, lower = screen[0::2], screen[1::2]
@@ -530,8 +673,7 @@ class Head3D:
         if sprite is not self._uploaded:
             self._upload(sprite)
         landmark_moves = self.flat._steady_eyes(offsets)
-        shaped = self._shape(landmark_moves, ears)
-        self.vbo.write(shaped.astype("f4").tobytes())
+        self._shape_on_gpu(landmark_moves, ears)
         model_rot = FLIP @ rotation @ FLIP
         self.prog["rot"].write(model_rot.astype("f4").T.tobytes())
         self.moved = self.shift + (0.0, self.lift * breath, 0.0)
@@ -543,7 +685,8 @@ class Head3D:
         self.texture.use(0)
         if self.own_mouth:
             if self.lip_cut is not None and len(self.lip_cut):
-                self.prog["opening"].value = self._lip_gap(shaped, model_rot)
+                self.prog["opening"].value = self._lip_gap(self._shape(landmark_moves, ears, self.cut),
+                                                           model_rot)
             self.skin_fbo.use()
             self.skin_fbo.clear(depth=1.0)
             r.ctx.enable(moderngl.CULL_FACE)
@@ -553,7 +696,8 @@ class Head3D:
             self.prog["outside_only"].value = False
             r.ctx.disable(moderngl.CULL_FACE)
             self.skin.use(1)
-            self.prog["mouth_box"].value = self._mouth_box(shaped[self.on_jaw], model_rot)
+            self.prog["mouth_box"].value = self._mouth_box(self._shape(landmark_moves, ears, self.on_jaw),
+                                                           model_rot)
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)
         self._draw_mouth(landmark_moves, model_rot)
