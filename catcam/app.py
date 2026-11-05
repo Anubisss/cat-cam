@@ -30,11 +30,20 @@ from catcam.ears import EarMotion
 from catcam.face_motion import ExpressionTransfer
 from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
-from catcam.head_pose import OneEuroFilter, relative_rotation, rotation_of, to_matrix, to_vector
+from catcam.head_pose import (
+    OneEuroFilter,
+    facing_camera,
+    relative_rotation,
+    rotation_of,
+    to_matrix,
+    to_vector,
+)
+from catcam.idle import Idle
 from catcam.paths import FACE_MODEL, HAND_MODEL
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker, put_text
+from catcam.tongue import your_tongue
 from catcam.voice import VirtualMic, Voice
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
@@ -42,6 +51,7 @@ WINDOW = "Cat Cam"
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.7  # 0..1, higher = snappier; kept snappy so blinks show
+TONGUE_SPEED = 8.0  # 1/s, how fast a dog's tongue follows yours out and in
 # One Euro filters: lower MIN_CUTOFF = less jitter when still, higher BETA =
 # less lag when moving fast. Expression speeds are in face widths per second.
 ROTATION_MIN_CUTOFF, ROTATION_BETA = 0.8, 3.5
@@ -94,7 +104,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             name=name,
             points=a.points,
             eyelids=CatFace(a.sprite, a.points[:, :2]),
-            mesh=CatMesh(renderer, a.sprite, a.points, a.background),
+            mesh=CatMesh(renderer, a.sprite, a.points, a.background, a.depth, a.kind == "dog"),
             paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
             sprite=a.sprite,
             background=a.background,
@@ -143,11 +153,14 @@ class FaceState:
         self.rotation_filter = OneEuroFilter(ROTATION_MIN_CUTOFF, ROTATION_BETA)
         self.expression_filter = OneEuroFilter(EXPRESSION_MIN_CUTOFF, EXPRESSION_BETA)
         self.transfer = ExpressionTransfer()
-        self.neutral_pose = None
+        self.neutral_pose = None  # the pose that faces the viewer; None = looking into the camera
+        self.take_pose = False
         self.head = np.zeros(3)  # rotation vector; 0 = facing the viewer
         self.blink = np.zeros(2)
         self.ear_motion = EarMotion()
         self.ears = np.zeros(2)  # ear angles, see catcam.ears
+        self.tongue = 0.0  # how far your tongue is out, 0..1
+        self.idle = Idle()  # what the animal does on its own while you are still
         self.offsets = np.zeros((478, 3))  # in face widths
         self.face = None  # last seen face landmarks in px
         self.last_seen = None
@@ -155,32 +168,46 @@ class FaceState:
     def reset_neutral(self):
         """Your next face and pose become the neutral ones."""
         self.transfer.reset()
-        self.neutral_pose = None
+        self.take_pose = True
 
-    def update(self, result, cam_size, dt: float, now: float):
+    def update(self, result, cam_size, dt: float, now: float, frame: np.ndarray | None = None,
+               talking: bool = False):
+        """result: the face tracker's; frame: the webcam image it saw (BGR), for your tongue."""
         if not result.face_landmarks:  # no face -> keep the last pose and expression
             self.ears = self.ear_motion.update(None, dt, now)
+            self.idle.update(self.head, None, talking, dt, now)
             return
         self.face = landmarks_px(result.face_landmarks[0], *cam_size)
         self.last_seen = now
-        pose = rotation_of(result.facial_transformation_matrixes[0])
-        if self.neutral_pose is None:
-            # The way you sit at the start (e.g. looking down at the screen
-            # past the camera) is "facing the viewer" for the cat.
-            self.neutral_pose = pose
-        self.head = self.rotation_filter(to_vector(relative_rotation(pose, self.neutral_pose)), dt)
+        if frame is not None:
+            self.tongue += min(TONGUE_SPEED * dt, 1.0) * (your_tongue(frame, self.face) - self.tongue)
+        matrix = result.facial_transformation_matrixes[0]
+        pose = rotation_of(matrix)
+        if self.take_pose:
+            # Your pose when you asked for it (e.g. looking down at the screen
+            # past the camera) is "facing the viewer" for the cat from now on.
+            self.neutral_pose, self.take_pose = pose, False
+        reference = facing_camera(matrix) if self.neutral_pose is None else self.neutral_pose
+        self.head = self.rotation_filter(to_vector(relative_rotation(pose, reference)), dt)
         scores = {c.category_name: c.score for c in result.face_blendshapes[0]}
         self.ears = self.ear_motion.update(scores, dt, now)
         closed = blinks(scores, self.face, self.transfer.neutral)
         self.blink = self.blink + BLINK_SMOOTHING * (closed - self.blink)
         relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
         self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
+        self.idle.update(self.head, scores, talking, dt, now)
 
 
 def render(cat: Cat, state: FaceState, paws: Paws) -> np.ndarray:
     sprite = cat.eyelids.render(blink=tuple(state.blink))
     offsets = state.transfer.to_cat(state.offsets, cat.points)
-    return paws.draw(cat.mesh.render(sprite, offsets, to_matrix(state.head), state.ears), cat.paw)
+    idle, tongue = state.idle, state.tongue
+    if cat.mesh.dog and idle.jaw > 0:  # panting
+        offsets = offsets + cat.mesh.open_jaw(idle.jaw)
+        tongue = max(tongue, idle.tongue)
+    rotation = to_matrix(state.head + idle.head)
+    face = cat.mesh.render(sprite, offsets, rotation, state.ears, tongue, idle.breath)
+    return paws.draw(face, cat.paw)
 
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None) -> np.ndarray:
@@ -337,7 +364,8 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
         cam_size = (frame.shape[1], frame.shape[0])
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         timestamp = int((now - start) * 1000)
-        state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now)
+        state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now, frame,
+                     voice.syllables.speaking)
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = cats[controls.current]
         voice.sounds = cat.sounds

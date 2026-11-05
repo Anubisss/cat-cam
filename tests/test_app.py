@@ -2,7 +2,20 @@ import cv2
 import numpy as np
 import pytest
 
-from catcam.app import BLINK_RANGE, ENTER, ESC, Controls, Mouse, blinks, preview, ramp, window_closed
+from catcam.app import (
+    BLINK_RANGE,
+    ENTER,
+    ESC,
+    EXPRESSIVE,
+    Controls,
+    FaceState,
+    Mouse,
+    blinks,
+    preview,
+    ramp,
+    window_closed,
+)
+from catcam.head_pose import to_matrix
 from catcam.picker import SIZE, Picker
 
 
@@ -115,6 +128,40 @@ def test_a_click_during_the_call_does_not_pick_later():
     controls.handle(ord("c"), state)
     controls.handle(-1 & 0xFF, state)
     assert controls.picking and controls.current == 0
+
+
+def _tracked(rotation_vector, position):
+    """A face tracker result with this head pose (MediaPipe space)."""
+    from types import SimpleNamespace
+
+    matrix = np.eye(4)
+    matrix[:3, :3] = to_matrix(np.array(rotation_vector, float))
+    matrix[:3, 3] = position
+    marks = [SimpleNamespace(x=x, y=y, z=z) for x, y, z in np.random.default_rng(0).random((478, 3))]
+    scores = [SimpleNamespace(category_name=name, score=0.0) for name in EXPRESSIVE]
+    return SimpleNamespace(face_landmarks=[marks], face_blendshapes=[scores],
+                           facial_transformation_matrixes=[matrix])
+
+
+def test_looking_into_the_camera_faces_the_viewer():
+    position = [8, 0, -40]  # sitting right of the camera
+    into_camera = [0, -np.arctan2(8, 40), 0]
+    state = FaceState()
+    state.update(_tracked(into_camera, position), (640, 480), 1 / 30, 0.0)
+    np.testing.assert_allclose(state.head, 0, atol=1e-9)
+    straight_ahead = FaceState()  # past the camera, parallel to its axis: a turn
+    straight_ahead.update(_tracked([0, 0, 0], position), (640, 480), 1 / 30, 0.0)
+    assert abs(straight_ahead.head[1]) == pytest.approx(np.arctan2(8, 40))
+
+
+def test_n_makes_your_current_pose_face_the_viewer():
+    state = FaceState()
+    state.reset_neutral()
+    looking_down = [0.3, 0, 0]
+    state.update(_tracked(looking_down, [0, 0, -40]), (640, 480), 1 / 30, 0.0)
+    np.testing.assert_allclose(state.head, 0, atol=1e-9)
+    state.update(_tracked([0, 0, 0], [0, 0, -40]), (640, 480), 1 / 30, 1 / 30)
+    assert abs(state.head[0]) > 0.01  # into the camera is now a nod
 
 
 def test_closed_eyes_count_as_a_blink_even_with_a_weak_score():

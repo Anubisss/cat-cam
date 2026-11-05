@@ -5,7 +5,8 @@ catcam.paw_photos) show the top of the paw when you show the back of your
 hand and the sole when you show your palm, your left hand as the cat's left
 paw. Cats without photos get a drawn socked paw with pink toe beans,
 coloured like the cat: the arm takes the fur of its cheeks, the sock the fur
-of its chin. Making a fist curls the paw's toes in. A paw's position is
+of its chin. Bending a finger curls the toe on its side of the paw in, so a
+fist curls them all. A paw's position is
 taken relative to your face, so a hand next to your chin puts the paw next to
 the cat's chin.
 """
@@ -24,13 +25,24 @@ ARM_LENGTH = 14  # in paw widths
 DEFAULT_FACE_WIDTH = 0.25  # of the camera width, used until a face is seen
 PHOTO_ARM_LENGTH = 8  # paw photos' arms are extended to this many paw widths
 PALM_RANGE = (-0.25, 0.25)  # how squarely the palm faces the camera: back view up to [0], sole from [1]
-# Fingertip-to-wrist distance over knuckle-to-wrist distance, averaged over
-# the four fingers: about 2 for an open hand, under 1 for a fist.
-CLOSED_RANGE = (1.5, 1.0)  # open at [0], fully closed at [1]
-# A closed paw: its toes (from the paw's top down to TOE_LENGTH paw widths)
-# are squashed toward their base by CURL and drawn together by NARROW.
+# Fingertip-to-wrist distance over knuckle-to-wrist distance: about 2 for a
+# straight finger, under 1 for one bent into a fist.
+CLOSED_RANGE = (1.5, 1.0)  # straight at [0], fully bent at [1]
+# The toes are the paw from the top down to TOE_LENGTH paw widths. A curled
+# toe slides down into the paw by CURL of its height, keeping its shape (the
+# fur KNUCKLE toe lengths above its base is squeezed instead), and is drawn in
+# toward the paw's middle by NARROW. A straight toe stands up, up to RAISE toe
+# lengths taller, as the other toes' mean curl goes over STAND (a raised
+# finger in a fist): its tip moves up, opening the toe at KNUCKLE, and the
+# gap is filled by the fur about FUR toe lengths below that, mirrored back and forth.
 TOE_LENGTH = 0.5
-CURL, NARROW = 0.45, 0.12
+CURL, NARROW = 0.5, 0.12
+RAISE, STAND = 1.2, (0.5, 1.0)
+KNUCKLE, FUR = 0.35, 0.2
+# The four toes' middles, in paw widths from the paw's middle; each keeps its
+# own length TOE_HALF either side of it.
+TOE_X = (-0.32, -0.12, 0.12, 0.32)
+TOE_HALF = 0.08
 
 BEAN = (178, 165, 240)
 OUTLINE_SHADE = 0.75  # toe outlines: the sock colour, darkened
@@ -190,11 +202,12 @@ def palm_toward(handedness: str, pts: np.ndarray) -> float:
     return float(turn if handedness == "Right" else -turn)
 
 
-def closedness(pts: np.ndarray) -> float:
-    """0 (open hand) .. 1 (fist), from how far the fingertips reach past the knuckles."""
-    reach = np.mean([np.linalg.norm(pts[tip] - pts[WRIST]) / (np.linalg.norm(pts[mcp] - pts[WRIST]) + 1e-6)
-                     for tip, mcp in FINGERS])
-    return float(np.clip((reach - CLOSED_RANGE[0]) / (CLOSED_RANGE[1] - CLOSED_RANGE[0]), 0, 1))
+def finger_curls(pts: np.ndarray) -> np.ndarray:
+    """(4,) index to pinky: 0 (straight) .. 1 (bent in), from how far each
+    fingertip reaches past its knuckle."""
+    reach = np.array([np.linalg.norm(pts[tip] - pts[WRIST]) / (np.linalg.norm(pts[mcp] - pts[WRIST]) + 1e-6)
+                      for tip, mcp in FINGERS])
+    return np.clip((reach - CLOSED_RANGE[0]) / (CLOSED_RANGE[1] - CLOSED_RANGE[0]), 0, 1)
 
 
 def palm_facing(toward: float) -> float:
@@ -227,6 +240,10 @@ class Paws:
             palm = 0.6 * pts[[INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]].mean(axis=0) + 0.4 * pts[WRIST]
             palm_width = np.linalg.norm(pts[INDEX_MCP] - pts[PINKY_MCP])
             label = handedness[0].category_name
+            # Each finger bends the toe on its side: ordered as the toes lie
+            # across the paw sprite (its x axis is (-up_y, up_x) on screen).
+            across = [(pts[mcp] - palm) @ (-up[1], up[0]) for _, mcp in FINGERS]
+            curls = finger_curls(pts)[np.argsort(across)]
             # Placed by where the hand is relative to your face in the camera
             # frame (so hands stay on screen even though the cat fills it);
             # sized relative to your face, like a real paw next to the cat's.
@@ -235,7 +252,7 @@ class Paws:
                 palm_width * (cat_face_width / face_width) * PAW_SIZE,
                 *up,
                 palm_toward(label, pts),  # from the detected handedness, before any relabelling
-                closedness(pts),
+                *curls,
             ])
             detections.append((label, target))
         seen = set()
@@ -272,9 +289,9 @@ class Paws:
         for name, slot in self.slots.items():
             if slot["presence"] < 0.02 or "params" not in slot:
                 continue
-            x, y, size, ux, uy, toward, closed = slot["params"]
+            x, y, size, ux, uy, toward, *curls = slot["params"]
             norm = np.hypot(ux, uy) + 1e-6
-            placement = (x, y, size, ux / norm, uy / norm, float(np.clip(closed, 0, 1)))
+            placement = (x, y, size, ux / norm, uy / norm, np.clip(curls, 0, 1))
             if isinstance(paws, PawSprite):
                 layers = [(paws, 1.0)]
             else:
@@ -287,8 +304,8 @@ class Paws:
 
 def _blend(out: np.ndarray, layers, placement):
     """Draws paws [(PawSprite, opacity)] crossfaded into out (in place), at
-    placement (x, y, size, up_x, up_y, closed)."""
-    x, y, size, ux, uy, closed = placement
+    placement (x, y, size, up_x, up_y, curls), curls (4,) of the toes from the sprite's left."""
+    x, y, size, ux, uy, curls = placement
     frame_h, frame_w = out.shape[:2]
     color = alpha = box = None
     for paw, opacity in layers:
@@ -296,9 +313,10 @@ def _blend(out: np.ndarray, layers, placement):
         # Rotate the sprite's "up" (0, -1) onto the hand's up direction.
         rot = s * np.array([[-uy, -ux], [ux, -uy]])
         m = np.hstack([rot, (np.array([x, y]) - rot @ paw.anchor)[:, None]])
-        if box is None:  # only warp and blend the screen area the first paw covers
+        if box is None:  # only warp and blend the screen area the first paw covers, raised toes included
             sprite_h, sprite_w = paw.image.shape[:2]
-            corners = np.array([[0, 0], [sprite_w, 0], [0, sprite_h], [sprite_w, sprite_h]], float)
+            top = -RAISE * paw.toes
+            corners = np.array([[0, top], [sprite_w, top], [0, sprite_h], [sprite_w, sprite_h]], float)
             corners = corners @ m[:, :2].T + m[:, 2]
             x0, y0 = np.clip(np.floor(corners.min(axis=0)).astype(int) - 2, 0, (frame_w, frame_h))
             x1, y1 = np.clip(np.ceil(corners.max(axis=0)).astype(int) + 2, 0, (frame_w, frame_h))
@@ -313,8 +331,8 @@ def _blend(out: np.ndarray, layers, placement):
             paw.image, m, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0),
         )
-        if closed > 0.01:
-            _curl_toes(warped, paw, m, closed)
+        if max(curls) > 0.01:
+            _curl_toes(warped, paw, m, curls)
         a = warped[..., 3:4].astype(np.float32) / 255 * opacity
         color += warped[..., :3] * a
         alpha += a
@@ -325,31 +343,60 @@ def _blend(out: np.ndarray, layers, placement):
     out[y0:y1, x0:x1] = np.clip(color + roi * (1 - np.minimum(alpha, 1)), 0, 255).astype(np.uint8)
 
 
-def _curl_toes(warped: np.ndarray, paw: PawSprite, m: np.ndarray, closed: float):
+def _curl_toes(warped: np.ndarray, paw: PawSprite, m: np.ndarray, curls: np.ndarray):
     """Redraws the toes of a paw placed in warped by m (sprite -> warped) curled in.
-    Below the toes the curl changes nothing, so only the toes' area is redrawn."""
-    w = paw.image.shape[1]
-    corners = np.array([[0, 0], [w, 0], [0, paw.toes], [w, paw.toes]], float) @ m[:, :2].T + m[:, 2]
+    Below the toes the curl changes nothing, so only the toes' area (and above,
+    where raised toes reach) is redrawn."""
+    w, top = paw.image.shape[1], -RAISE * paw.toes
+    corners = np.array([[0, top], [w, top], [0, paw.toes], [w, paw.toes]], float) @ m[:, :2].T + m[:, 2]
     h_out, w_out = warped.shape[:2]
     x0, y0 = np.clip(np.floor(corners.min(axis=0)).astype(int) - 1, 0, (w_out, h_out))
     x1, y1 = np.clip(np.ceil(corners.max(axis=0)).astype(int) + 1, 0, (w_out, h_out))
     if x1 <= x0 or y1 <= y0:
         return
-    u, v = _curled(paw, m, (x0, y0, x1, y1), closed)
+    u, v = _curled(paw, m, (x0, y0, x1, y1), curls)
     warped[y0:y1, x0:x1] = cv2.remap(paw.image, u, v, cv2.INTER_LINEAR,
                                      borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
 
 
-def _curled(paw: PawSprite, m: np.ndarray, box, closed: float):
+def _toe_heights(paw: PawSprite) -> np.ndarray:
+    """(4,) how far (sprite px) each toe's middle reaches above the paw's toe line."""
+    columns = np.round(paw.anchor[0] + np.array(TOE_X) * paw.width).astype(int)
+    columns = np.clip(columns, 0, paw.image.shape[1] - 1)
+    inside = paw.image[:int(paw.toes), columns, 3] > 128
+    return int(paw.toes) - np.where(inside.any(axis=0), inside.argmax(axis=0), int(paw.toes))
+
+
+def _curled(paw: PawSprite, m: np.ndarray, box, curls: np.ndarray):
     """Sprite coordinates (u, v) to sample for each pixel of box (x0, y0, x1,
-    y1) of the area the paw is placed in by m, with its toes curled in."""
+    y1) of the area the paw is placed in by m, with each toe curled in by its
+    curl (curls (4,), from the sprite's left)."""
     inverse = cv2.invertAffineTransform(m)
     x0, y0, x1, y1 = box
     ys, xs = np.mgrid[y0:y1, x0:x1].astype(np.float32)
     u = inverse[0, 0] * xs + inverse[0, 1] * ys + inverse[0, 2]
     v = inverse[1, 0] * xs + inverse[1, 1] * ys + inverse[1, 2]
+    toe = TOE_LENGTH * paw.width
+    others = (np.sum(curls) - curls) / (len(curls) - 1)
+    stands = np.clip((others - STAND[0]) / (STAND[1] - STAND[0]), 0, 1)
+    column = (u - paw.anchor[0]) / paw.width
+    toe_edges = np.ravel([(x - TOE_HALF, x + TOE_HALF) for x in TOE_X])
+
+    def per_toe(values):  # the value of the toe in each column
+        return np.interp(column, toe_edges, np.repeat(values, 2))
+
+    closed = per_toe(curls)
+    dropped = per_toe(CURL * curls * _toe_heights(paw))
+    raised = per_toe(RAISE * toe * (1 - curls) * stands)
+    knuckle = KNUCKLE * toe
     above = np.maximum(paw.toes - v, 0)  # how far up the toes, as drawn
-    v = np.where(v < paw.toes, paw.toes - above / (1 - CURL * closed), v)
+    up_finger = above - knuckle
+    back_and_forths = np.maximum(np.round(raised / (2 * FUR * toe)), 1)  # whole ones, so the tip joins on
+    band = np.maximum(raised / (2 * back_and_forths), 1e-6)
+    fur = knuckle - (band - np.abs(np.mod(up_finger, 2 * band) - band))
+    above = np.where(above < knuckle, above, np.where(up_finger < raised, fur, above - raised))
+    above += dropped * np.minimum(above / knuckle, 1)
+    v = np.where(v < paw.toes, paw.toes - above, v)
     narrow = 1 - NARROW * closed * np.clip(above / (TOE_LENGTH * paw.width), 0, 1)
     u = paw.anchor[0] + (u - paw.anchor[0]) / narrow
     return u.astype(np.float32), v.astype(np.float32)

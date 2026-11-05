@@ -17,6 +17,16 @@ def rotation_of(matrix: np.ndarray) -> np.ndarray:
     return _FLIP @ (u @ vt) @ _FLIP
 
 
+def facing_camera(matrix: np.ndarray) -> np.ndarray:
+    """Rotation (image coords) of an upright head where the matrix puts it,
+    looking straight into the camera."""
+    position = np.asarray(matrix)[:3, 3]
+    forward = -position / np.linalg.norm(position)  # the camera sits at the origin
+    side = np.cross([0.0, 1.0, 0.0], forward)
+    side /= np.linalg.norm(side)
+    return _FLIP @ np.column_stack([side, np.cross(forward, side), forward]) @ _FLIP
+
+
 def relative_rotation(current: np.ndarray, reference: np.ndarray) -> np.ndarray:
     """Rotation that turns a head from the reference pose to the current one."""
     return current @ reference.T

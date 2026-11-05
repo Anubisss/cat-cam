@@ -7,6 +7,10 @@ yours, and the gap between the lips is filled with a drawn mouth (teeth, dark
 inside, tongue). The texture is the cat sprite, so at rest the mesh reproduces
 the photo.
 
+A cat with a depth map (see catcam.depth) takes its shape from it instead of
+from the human-like landmark depth, e.g. a dog's long muzzle, and is lit per
+pixel from the map's surface normals.
+
 Sizes are in face widths, so any sprite resolution behaves the same.
 """
 
@@ -15,9 +19,10 @@ import moderngl
 import numpy as np
 from scipy.spatial import Delaunay
 
+from catcam import tongue
 from catcam.cat_face import EYES
 from catcam.ears import bend, find_ears
-from catcam.lighting import shading, vertex_normals
+from catcam.lighting import LIGHT, SHADE_RANGE, STRENGTH, shading, vertex_normals
 from catcam.mouth_fit import LOWER_INNER_LIP, OUTER_LIPS, UPPER_INNER_LIP, snap_mouth
 
 OUTLINE_POINTS = 90
@@ -43,6 +48,16 @@ MOUTH_MAX_GROW = 1.3  # enlarged by at most this, more would distort the face ar
 MOUTH_GROW = (1.3, 2.5)
 # Framing: ear tips and chin as fractions of the screen height.
 TOP_MARGIN, CHIN_LINE = 0.04, 0.93  # room above for perked ears
+# A full breath lifts the head BREATH_RISE face widths on the swelling chest
+# (below the chin, widening by BREATH_SWELL; the mesh's bottom stays put).
+BREATH_RISE, BREATH_SWELL = 0.05, 0.08
+# With a depth map: the nose tip lies HEAD_DEPTH in front of the head's outline.
+# The map's rim blends into the backdrop, so DEPTH_EDGE of it is replaced by the
+# depth just inside; DEPTH_SMOOTHING evens out its noise, which would show in
+# the shading.
+HEAD_DEPTH = 1.0
+DEPTH_EDGE = 0.01
+DEPTH_SMOOTHING = 0.008
 
 # Around each eye the face moves rigidly: a person's eyelids travel further
 # than these squinting cats' eyes are tall, so copying them would fold the
@@ -78,13 +93,25 @@ void main() {
 FACE_FRAGMENT_SHADER = """
 #version 330
 uniform sampler2D tex;
+uniform sampler2D normal_map;  // the photo's surface normals, for a cat with a depth map
+uniform bool relight;          // shade per pixel from normal_map instead of per vertex
+uniform mat3 rotation;
+uniform vec3 light;
+uniform float strength;
+uniform vec2 shade_range;
 in vec2 uv;
 in float shade;
 out vec4 color;
 void main() {
     vec4 c = texture(tex, uv);
     if (c.a < 0.02) discard;
-    color = vec4(c.rgb * shade, c.a);
+    float s = shade;
+    if (relight) {  // catcam.lighting.shading, per pixel
+        vec3 n = normalize(texture(normal_map, uv).xyz);
+        s = clamp(1.0 + strength * (max(dot(rotation * n, light), 0.0) - max(dot(n, light), 0.0)),
+                  shade_range.x, shade_range.y);
+    }
+    color = vec4(c.rgb * s, c.a);
 }
 """
 # The inside of the mouth, drawn in the gap between the inner lips. Per vertex:
@@ -115,6 +142,7 @@ uniform float mouth_size;    // the cat's mouth width at rest, face widths
 uniform float mouth_span;    // current mouth width, face widths
 uniform vec2 turn;           // image shift per face width of depth (from the head rotation)
 uniform vec3 lip_tint;       // colour of the cat's lips (RGB, mean 1): gums, tongue and teeth take it on
+uniform bool dog;            // a dog's teeth and dark gums; its tongue is drawn on its own (catcam.tongue)
 in vec3 m;
 in float shade;
 out vec4 color;
@@ -128,6 +156,14 @@ const float UPPER_W[6] = float[6](0.07, 0.065, 0.07, 0.12, 0.14, 0.15);
 const float UPPER_L[6] = float[6](0.1, 0.095, 0.1, 0.3, 0.13, 0.1);
 const float LOWER_W[6] = float[6](0.06, 0.055, 0.06, 0.11, 0.14, 0.15);
 const float LOWER_L[6] = float[6](0.055, 0.05, 0.055, 0.17, 0.07, 0.05);
+// A dog's: three small incisors, a gap where the other jaw's canine fits, the
+// long canine, premolars.
+const int DOG_FANG = 4;
+const float DOG_UPPER_W[6] = float[6](0.06, 0.055, 0.06, 0.035, 0.11, 0.16);
+const float DOG_UPPER_L[6] = float[6](0.07, 0.065, 0.075, 0.0, 0.26, 0.08);
+const float DOG_LOWER_W[6] = float[6](0.05, 0.05, 0.055, 0.02, 0.11, 0.16);
+const float DOG_LOWER_L[6] = float[6](0.05, 0.05, 0.055, 0.0, 0.2, 0.06);
+const vec3 DOG_GUM = vec3(0.32, 0.14, 0.16);  // pigmented, nearly black
 
 const vec3 ENAMEL = vec3(0.86, 0.83, 0.75);
 const vec3 ENAMEL_ROOT = vec3(0.72, 0.64, 0.5);
@@ -148,7 +184,8 @@ vec2 layer(float depth) {
 // A row of teeth around the dental arch. `down` is the distance from the gum
 // edge toward the tips (mouth widths). Returns (coverage, shade); `rgb` gets
 // the tooth colour.
-vec2 tooth_row(float x, float down, const float W[6], const float L[6], float point, out vec3 rgb) {
+vec2 tooth_row(float x, float down, const float W[6], const float L[6], float point, int fang,
+               out vec3 rgb) {
     float theta = asin(clamp(x / ARCH, -0.999, 0.999));
     float arc = abs(theta) * ARCH, start = 0.0;
     int k = 0;
@@ -161,7 +198,7 @@ vec2 tooth_row(float x, float down, const float W[6], const float L[6], float po
     float q = clamp((arc - start) / w, 0.0, 1.0);  // 0 = side toward the middle
     float side = abs(2.0 * q - 1.0);
     // The fang tapers to a point, slightly curved; the others are rounded off.
-    float len = L[k] * (k == FANG ? 1.0 - point * pow(side, 1.4)
+    float len = L[k] * (k == fang ? 1.0 - point * pow(side, 1.4)
                                   : 1.0 - 0.2 * pow(smoothstep(0.5, 1.0, side), 2.0));
     float aa = fwidth(down) + 1e-4;
     float cover = 1.0 - smoothstep(len - aa, len + aa, down);
@@ -186,7 +223,7 @@ void main() {
     vec2 t = layer(THROAT_DEPTH);
     float into = clamp(min(t.y, gap - t.y) / max(0.5 * gap, 1e-4), 0.0, 1.0);
     float centre = 1.0 - smoothstep(0.15, 0.5, abs(t.x));
-    vec3 gum_color = GUM * mix(vec3(1.0), lip_tint, 0.5);
+    vec3 gum_color = dog ? DOG_GUM : GUM * mix(vec3(1.0), lip_tint, 0.5);
     vec3 mucosa = MUCOSA * mix(vec3(1.0), lip_tint, 0.3);
     vec3 c = mix(mucosa, THROAT, smoothstep(0.0, 1.0, into) * mix(0.55, 1.0, centre));
 
@@ -200,17 +237,19 @@ void main() {
     float top = smoothstep(0.0, max(height, 1e-4), rise);  // 0 at the front, 1 at its back edge
     float sides = mix(0.7, 1.0, 1.0 - smoothstep(0.2, 0.36, abs(g.x)));
     vec3 tongue = TONGUE * mix(vec3(1.0), lip_tint, 0.3) * groove * mix(1.05, 0.55, top * top) * sides;
-    c = mix(c, tongue, on_tongue);
+    if (!dog) c = mix(c, tongue, on_tongue);
 
     // Lower teeth, mostly hidden behind the lower lip.
     vec3 rgb;
     vec2 lo = layer(LOWER_TEETH_DEPTH);
-    vec2 lower = tooth_row(lo.x, gap - lo.y, LOWER_W, LOWER_L, 0.8, rgb);
+    vec2 lower = dog ? tooth_row(lo.x, gap - lo.y, DOG_LOWER_W, DOG_LOWER_L, 0.8, DOG_FANG, rgb)
+                     : tooth_row(lo.x, gap - lo.y, LOWER_W, LOWER_L, 0.8, FANG, rgb);
     c = mix(c, mix(TOOTH_SHADOW, rgb, 0.75), lower.x * teeth_amount);
 
     // Upper teeth, with the gum line just showing between them.
     vec2 up = layer(TEETH_DEPTH);
-    vec2 upper = tooth_row(up.x, up.y, UPPER_W, UPPER_L, 0.85, rgb);
+    vec2 upper = dog ? tooth_row(up.x, up.y, DOG_UPPER_W, DOG_UPPER_L, 0.85, DOG_FANG, rgb)
+                     : tooth_row(up.x, up.y, UPPER_W, UPPER_L, 0.85, FANG, rgb);
     c = mix(c, rgb, upper.x * teeth_amount);
     float gum = 1.0 - smoothstep(0.012, 0.02, up.y);
     c = mix(c, gum_color * 0.8, gum * teeth_amount);
@@ -269,6 +308,34 @@ def _outline_depth(outline_xy: np.ndarray, face: np.ndarray, face_width: float) 
     k = OUTLINE_DEPTH_SMOOTHING
     padded = np.concatenate([z[-k:], z, z[:k]])  # the outline is closed
     return np.convolve(padded, np.ones(2 * k + 1) / (2 * k + 1), mode="same")[k:-k]
+
+
+def _sample(image: np.ndarray, xy: np.ndarray) -> np.ndarray:
+    """Bilinear samples of a float image at points (n, 2) px."""
+    xy = np.asarray(xy, np.float32) - 0.5  # pixel i covers [i, i + 1)
+    return cv2.remap(image, xy[:, 0].reshape(1, -1), xy[:, 1].reshape(1, -1), cv2.INTER_LINEAR,
+                     borderMode=cv2.BORDER_REPLICATE)[0]
+
+
+def _photo_depth(depth: np.ndarray, alpha: np.ndarray, nose: np.ndarray, outline_xy: np.ndarray,
+                 face_width: float) -> np.ndarray:
+    """(h, w) depth of every sprite pixel, in sprite px like the landmarks' z,
+    from the depth map (nearer = larger); continued beyond the outline."""
+    edge = max(int(DEPTH_EDGE * face_width), 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * edge + 1, 2 * edge + 1))
+    inside = cv2.erode((alpha > 128).astype(np.uint8), kernel)
+    _, nearest = cv2.distanceTransformWithLabels(1 - inside, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL)
+    filled = depth[inside > 0][nearest - 1]  # the labels number the inside pixels in reading order
+    near = cv2.GaussianBlur(filled, (0, 0), DEPTH_SMOOTHING * face_width)
+    rim = np.median(_sample(near, outline_xy))
+    return HEAD_DEPTH * face_width * (rim - near) / (_sample(near, nose[None])[0] - rim)
+
+
+def _normal_map(z: np.ndarray) -> np.ndarray:
+    """(h, w, 3) unit normals of the surface z (sprite px), pointing toward the camera."""
+    dz_dy, dz_dx = np.gradient(z)
+    normals = np.dstack([dz_dx, dz_dy, -np.ones_like(z)])
+    return normals / np.linalg.norm(normals, axis=2, keepdims=True)
 
 
 def _bigger_mouth(points: np.ndarray, face: np.ndarray, face_width: float) -> np.ndarray:
@@ -392,8 +459,17 @@ class Renderer:
         self.face_prog = self.ctx.program(
             vertex_shader=FACE_VERTEX_SHADER, fragment_shader=FACE_FRAGMENT_SHADER
         )
+        self.face_prog["normal_map"].value = 1
+        self.face_prog["light"].value = tuple(LIGHT)
+        self.face_prog["strength"].value = STRENGTH
+        self.face_prog["shade_range"].value = SHADE_RANGE
+        # Bound for cats without a depth map; unused, but the driver wants a texture there.
+        self.no_normals = self.ctx.texture((1, 1), 3, np.array([0, 0, -1], "f2").tobytes(), dtype="f2")
         self.mouth_prog = self.ctx.program(
             vertex_shader=MOUTH_VERTEX_SHADER, fragment_shader=MOUTH_FRAGMENT_SHADER
+        )
+        self.tongue_prog = self.ctx.program(
+            vertex_shader=tongue.VERTEX_SHADER, fragment_shader=tongue.FRAGMENT_SHADER
         )
         size = (self.out_w, self.out_h)
         self.msaa = self.ctx.framebuffer(
@@ -404,8 +480,12 @@ class Renderer:
 
 
 class CatMesh:
-    def __init__(self, renderer: Renderer, sprite: np.ndarray, landmarks: np.ndarray, bg_color):
-        """sprite: BGRA, landmarks: (478, 3) sprite px with depth, bg_color: BGR."""
+    def __init__(self, renderer: Renderer, sprite: np.ndarray, landmarks: np.ndarray, bg_color,
+                 depth: np.ndarray | None = None, dog: bool = False):
+        """sprite: BGRA, landmarks: (478, 3) sprite px with depth, bg_color: BGR,
+        depth: the sprite's depth map (h, w), nearer = larger, or None,
+        dog: a dog's teeth and tongue instead of a cat's."""
+        self.dog = dog
         self.renderer = renderer
         self.out_w, self.out_h = renderer.out_w, renderer.out_h
         self.bg = tuple(np.asarray(bg_color) / 255) + (1.0,)
@@ -420,6 +500,10 @@ class CatMesh:
         skull = _skull_points(sprite[..., 3], face, self.face_width, outline)
 
         photo = np.vstack([face, skull, outline])  # where each vertex is in the texture
+        surface = None
+        if depth is not None:
+            surface = _photo_depth(depth, sprite[..., 3], face[1, :2], outline_xy, self.face_width)
+            photo[:, 2] = _sample(surface, photo[:, :2])
         self.rest = _bigger_mouth(photo, face, self.face_width)
         face = self.rest[: self.face_count]
         self.ears = find_ears(self.rest, outline_xy, self.face_count, self.face_width)
@@ -433,6 +517,9 @@ class CatMesh:
         self.fur_follow = weights * falloff[:, None]  # (fur points, face points)
         self.eye_rigid, self.eye_anchor = _eye_weights(face)
         self.smoothing = _smoothing(face, self.face_width)
+        bottom, chin_y = self.rest[:, 1].max(), face[:, 1].max()
+        self.breath_rise = np.clip((bottom - self.rest[:, 1]) / (bottom - chin_y + 1e-6), 0, 1)
+        self.breath_centre = face[:, 0].mean()
         # Rotate around the middle of the face so the head turns in place.
         self.pivot = np.array([face[:, 0].mean(), face[1, 1], np.median(face[:, 2])])
         self.focal = CAMERA_DISTANCE * self.face_width
@@ -473,10 +560,35 @@ class CatMesh:
         self.texture = ctx.texture((tex_w, tex_h), 4)
         self.texture.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
         self._uploaded = None  # sprite currently in the texture
+        if dog:
+            count = 3 * tongue.ROWS
+            self.tongue_vbo = ctx.buffer(reserve=count * 3 * 4, dynamic=True)
+            self.tongue_inputs = ctx.buffer(reserve=count * 4 * 4, dynamic=True)
+            self.tongue_vao = ctx.vertex_array(
+                renderer.tongue_prog,
+                [(self.tongue_vbo, "3f", "in_pos"), (self.tongue_inputs, "4f", "in_tongue")],
+                ctx.buffer(tongue.triangles().astype("i4").tobytes()),
+            )
+        self.normal_map = None
+        if surface is not None:
+            normals = _normal_map(surface).astype("f2")
+            self.normal_map = ctx.texture((tex_w, tex_h), 3, normals.tobytes(), dtype="f2")
 
     def face_on_screen(self):
         """Screen position of the cat's face center and its width in screen px."""
         return self.offset + self.pivot[:2] * self.scale, self.face_width * self.scale
+
+    def open_jaw(self, amount: float) -> np.ndarray:
+        """Face offsets (478, 3) that drop everything below the mouth by amount face widths."""
+        upper = self.rest[UPPER_INNER_LIP]
+        order = np.argsort(upper[:, 0])
+        line = np.interp(self.rest[:478, 0], upper[order, 0], upper[order, 1])
+        weight = np.clip((self.rest[:478, 1] - line) / (0.01 * self.face_width), 0, 1)
+        weight[LOWER_INNER_LIP[1:-1]] = 1
+        weight[UPPER_INNER_LIP] = 0
+        offsets = np.zeros((478, 3))
+        offsets[:, 1] = weight * amount * self.face_width
+        return offsets
 
     def _steady_eyes(self, offsets: np.ndarray) -> np.ndarray:
         """Offsets smoothed between neighbours, with the eye regions moving rigidly."""
@@ -485,13 +597,18 @@ class CatMesh:
             out += rigid[:, None] * (anchor @ out - out)
         return out
 
-    def _shape(self, offsets: np.ndarray, ears=(0.0, 0.0)) -> np.ndarray:
-        """The mesh deformed by the face offsets and ear angles, unrotated."""
+    def _shape(self, offsets: np.ndarray, ears=(0.0, 0.0), breath: float = 0.0) -> np.ndarray:
+        """The mesh deformed by the face offsets, ear angles and breath (0..1), unrotated."""
         offsets = self._steady_eyes(offsets)
         shaped = self.rest.copy()
         shaped[: self.face_count] += offsets
         shaped[self.face_count:] += self.fur_follow @ offsets
-        return bend(shaped, self.ears, ears)
+        shaped = bend(shaped, self.ears, ears)
+        if breath:
+            chest = 1 - self.breath_rise  # 0 from the chin up
+            shaped[:, 0] += (shaped[:, 0] - self.breath_centre) * BREATH_SWELL * breath * chest
+            shaped[:, 1] -= BREATH_RISE * self.face_width * breath * self.breath_rise
+        return shaped
 
     def _project(self, shaped: np.ndarray, rotation: np.ndarray) -> np.ndarray:
         """Rotate the shaped mesh and project it to NDC."""
@@ -520,23 +637,41 @@ class CatMesh:
         prog["teeth_amount"].value = float(np.clip(teeth, 0, 1))
         prog["mouth_size"].value = float(self.mouth_size)
         prog["lip_tint"].value = tuple(float(v) for v in self.lip_tint)
+        prog["dog"].value = self.dog
         prog["mouth_span"].value = float(np.linalg.norm(upper[-1, :2] - upper[0, :2]) / self.face_width)
         # A point one face width deeper moves by rotation[:2, 2] (image x, y).
         prog["turn"].value = tuple(float(v) for v in rotation[:2, 2])
 
+    def _render_tongue(self, shaped: np.ndarray, rotation: np.ndarray, out: float):
+        span = np.linalg.norm(shaped[UPPER_INNER_LIP[-1], :2] - shaped[UPPER_INNER_LIP[0], :2])
+        shaped_tongue = tongue.shape(shaped[13], shaped[14], span, self.face_width, out)
+        if shaped_tongue is None:
+            return
+        points, inputs = shaped_tongue
+        self.tongue_vbo.write(self._project(points, rotation).tobytes())
+        self.tongue_inputs.write(inputs.tobytes())
+        prog = self.renderer.tongue_prog
+        prog["shade"].value = float(shading(self.normals[[14]], rotation)[0])
+        prog["turn"].value = tuple(float(v) for v in rotation[:2, 2])
+        self.tongue_vao.render()
+
     def render(self, sprite: np.ndarray, offsets: np.ndarray, rotation: np.ndarray,
-               ears=(0.0, 0.0)) -> np.ndarray:
-        """Draw the cat with face offsets (478, 3), head rotation and ear angles
-        (radians, image-left and image-right ear, positive = flattened); returns BGR."""
+               ears=(0.0, 0.0), tongue_out: float = 0.0, breath: float = 0.0) -> np.ndarray:
+        """Draw the cat with face offsets (478, 3), head rotation, ear angles
+        (radians, image-left and image-right ear, positive = flattened), a
+        dog's tongue out by tongue_out (0..1) and lungs full by breath (0..1); returns BGR."""
         if sprite is not self._uploaded:  # unchanged while the eyes are open
             self.texture.write(np.ascontiguousarray(sprite).tobytes())
             self.texture.build_mipmaps()
             self._uploaded = sprite
-        shaped = self._shape(offsets, ears)
+        shaped = self._shape(offsets, ears, breath)
         self.vbo.write(self._project(shaped, rotation).tobytes())
         self.shade_vbo.write(shading(self.normals, rotation).astype("f4").tobytes())
         r = self.renderer
         self._update_mouth(shaped, rotation)
+        r.face_prog["relight"].value = self.normal_map is not None
+        r.face_prog["rotation"].write(rotation.T.astype("f4").tobytes())  # column-major
+        (r.no_normals if self.normal_map is None else self.normal_map).use(1)
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)
         r.ctx.enable(moderngl.DEPTH_TEST | moderngl.BLEND)
@@ -544,6 +679,8 @@ class CatMesh:
         self.mouth_vao.render()
         self.texture.use(0)
         self.face_vao.render()
+        if self.dog:
+            self._render_tongue(shaped, rotation, tongue_out)
         r.ctx.copy_framebuffer(r.resolved, r.msaa)
 
         data = r.resolved.read(components=3)

@@ -20,6 +20,8 @@ dev = [
     "ruff>=0.17.3",
 ]
 prepare = [
+    "onnxruntime>=1.31.1",
+    "pooch>=1.9.0",
     "rembg[cpu]>=2.0.86",
 ]
 

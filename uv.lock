@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 
 [[package]]
@@ -42,6 +42,8 @@ dev = [
     { name = "ruff" },
 ]
 prepare = [
+    { name = "onnxruntime" },
+    { name = "pooch" },
     { name = "rembg", extra = ["cpu"] },
 ]
 
@@ -63,7 +65,11 @@ dev = [
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "ruff", specifier = ">=0.17.3" },
 ]
-prepare = [{ name = "rembg", extras = ["cpu"], specifier = ">=2.0.86" }]
+prepare = [
+    { name = "onnxruntime", specifier = ">=1.31.1" },
+    { name = "pooch", specifier = ">=1.9.0" },
+    { name = "rembg", extras = ["cpu"], specifier = ">=2.0.86" },
+]
 
 [[package]]
 name = "certifi"

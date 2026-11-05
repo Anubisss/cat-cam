@@ -1,10 +1,11 @@
 """Turns the portraits in all_cats/ into the assets the filter runs on.
 
 For every all_cats/<Name>.png this cuts the cat out of its background, finds
-its face landmarks and writes assets/cats/<Name>/cutout.png and face.npz.
-Paw photos next to it (<Name>PawsFront.png, <Name>PawsBack.png) become its
-paw sprites (see catcam.paw_photos). Already prepared cats and paws are
-skipped unless --force is given.
+its face landmarks and its depth, and writes assets/cats/<Name>/cutout.png,
+face.npz and depth.png. Paw photos next to it (<Name>PawsFront.png,
+<Name>PawsBack.png) become its paw sprites (see catcam.paw_photos). Already
+prepared cats and paws are skipped unless --force is given; a prepared cat
+named on the command line still gets a depth.png if it has none.
 
 Run after adding or replacing a portrait:
 
@@ -19,6 +20,7 @@ import numpy as np
 
 from catcam import paw_photos
 from catcam.cats import portraits as find_portraits
+from catcam.depth import depth_file, prepare_depth
 from catcam.landmark_fit import (
     FitError,
     Portrait,
@@ -98,8 +100,15 @@ def main():
     paws_todo = [n for n in names if paw_photos.has_photos(n, PORTRAITS) and (args.force or not all(
         paw_photos.paw_files(n, ASSETS)[v, h].exists()
         for v in paw_photos.has_photos(n, PORTRAITS) for h in paw_photos.HANDS))]
-    if not todo and not paws_todo:
+    depth_todo = [n for n in args.names if n not in todo and not depth_file(n, ASSETS).exists()]
+    if not todo and not paws_todo and not depth_todo:
         print("All cats are prepared already (use --force to redo them).")
+        return
+
+    for name in depth_todo:
+        print(f"Finding {name}'s depth...")
+        prepare_depth(name, ASSETS)
+    if not todo and not paws_todo:
         return
 
     from rembg import new_session
@@ -160,6 +169,7 @@ def main():
             failed.append(name)
             continue
         save(name, cutouts[name], points, background_color(images[name]))
+        prepare_depth(name, ASSETS)
         print(f"  saved {ASSETS / name}")
     if failed:
         sys.exit(f"Failed: {', '.join(failed)}")

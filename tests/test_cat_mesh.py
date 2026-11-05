@@ -22,7 +22,8 @@ def renderer():
 
 @pytest.fixture(scope="module")
 def meshes(renderer, real_cats):
-    return [(cat, CatMesh(renderer, cat.sprite, cat.points, HOLE)) for cat in real_cats]
+    return [(cat, CatMesh(renderer, cat.sprite, cat.points, HOLE, cat.depth, cat.kind == "dog"))
+            for cat in real_cats]
 
 
 def _holes_in_face(mesh, image, offsets, rotation):
@@ -98,25 +99,13 @@ def test_eyelid_motion_does_not_bend_the_mesh(meshes):
         assert steady[brow, 1] < -0.005 * mesh.face_width, cat.name  # brows still move
 
 
-def _open(mesh, amount):
-    from catcam.cat_mesh import UPPER_INNER_LIP
-
-    up = mesh.rest[UPPER_INNER_LIP]
-    order = np.argsort(up[:, 0])
-    line = np.interp(mesh.rest[:478, 0], up[order, 0], up[order, 1])
-    weight = np.clip((mesh.rest[:478, 1] - line) / (0.01 * mesh.face_width), 0, 1)
-    weight[LOWER_INNER_LIP[1:-1]] = 1
-    weight[UPPER_INNER_LIP] = 0
-    offsets = np.zeros((478, 3))
-    offsets[:, 1] = weight * amount * mesh.face_width
-    return offsets
-
-
 def test_teeth_keep_their_size_as_the_mouth_opens(meshes):
     for cat, mesh in meshes:
+        if mesh.dog:  # its tongue lies over this column (the teeth are sized the same way)
+            continue
         lengths = []
         for amount in (0.07, 0.14):
-            image = mesh.render(cat.sprite, _open(mesh, amount), np.eye(3))
+            image = mesh.render(cat.sprite, mesh.open_jaw(amount), np.eye(3))
             top = (mesh.offset + cat.points[13, :2] * mesh.scale).astype(int)
             x = top[0] + int(0.025 * mesh.face_width * mesh.scale)  # on a front tooth, off the gap
             column = image[top[1]:top[1] + int(0.2 * mesh.face_width * mesh.scale), x].astype(int)
@@ -142,7 +131,7 @@ def test_small_mouths_are_enlarged(meshes):
 
 def test_fangs_reach_below_the_front_teeth(meshes):
     for cat, mesh in meshes:
-        image = mesh.render(cat.sprite, _open(mesh, 0.14), np.eye(3))
+        image = mesh.render(cat.sprite, mesh.open_jaw(0.14), np.eye(3))
         # From just below the upper lip (pale lips would count as enamel).
         top = (mesh.offset + (mesh.rest[13, :2] + [0, 0.01 * mesh.face_width]) * mesh.scale).astype(int)
         depth = int(0.12 * mesh.face_width * mesh.scale)  # within the opening
@@ -155,6 +144,108 @@ def test_fangs_reach_below_the_front_teeth(meshes):
             lengths.append(runs.max() if len(runs) else 0)  # the longest bright stretch: a tooth
         front, fang = lengths[0], max(lengths[1:])
         assert fang > 1.8 * front, (cat.name, front, fang)
+
+
+def _dome(radius=80, size=200):
+    yy, xx = np.mgrid[:size, :size] + 0.5
+    r = np.hypot(xx - size / 2, yy - size / 2)
+    angles = np.linspace(0, 2 * np.pi, 90, endpoint=False)
+    outline = size / 2 + radius * np.column_stack([np.cos(angles), np.sin(angles)])
+    return r, outline
+
+
+def test_photo_depth_puts_the_nose_in_front_and_ignores_the_backdrop():
+    from catcam.cat_mesh import HEAD_DEPTH, _photo_depth, _sample
+
+    r, outline = _dome()
+    alpha = np.where(r < 80, 255, 0).astype(np.uint8)
+    disparity = np.sqrt(np.clip(1 - (r / 80) ** 2, 0, 1)).astype(np.float32)
+    disparity[alpha == 0] = 5  # whatever the model saw around the cat
+    z = _photo_depth(disparity, alpha, np.array([100.0, 100.0]), outline, face_width=100)
+    rim = np.median(_sample(z, outline))
+    assert _sample(z, [[100, 100]])[0] - rim == pytest.approx(-HEAD_DEPTH * 100, rel=1e-3)
+    # Beyond the outline the depth carries on from just inside it.
+    assert abs(z[100, 195] - z[100, 178]) < 0.05 * HEAD_DEPTH * 100
+
+
+def test_normal_map_of_a_dome_points_outward_toward_the_camera():
+    from catcam.cat_mesh import _normal_map
+
+    r, _ = _dome()
+    normals = _normal_map(-np.sqrt(np.clip(90 ** 2 - r ** 2, 0, None)))
+    np.testing.assert_allclose(np.linalg.norm(normals, axis=2), 1, rtol=1e-6)
+    assert (normals[..., 2] < 0).all()
+    np.testing.assert_allclose(normals[100, 100], [0, 0, -1], atol=0.02)
+    assert normals[100, 40, 0] < -0.5 and normals[100, 160, 0] > 0.5  # left and right
+    assert normals[40, 100, 1] < -0.5 and normals[160, 100, 1] > 0.5  # top and bottom
+
+
+def test_a_depth_map_shapes_the_head(meshes):
+    from catcam.cat_mesh import HEAD_DEPTH, OUTLINE_POINTS
+
+    shaped = [(cat, mesh) for cat, mesh in meshes if cat.depth is not None]
+    assert shaped
+    for cat, mesh in shaped:
+        outline = mesh.rest[-OUTLINE_POINTS:, 2]
+        nose = mesh.rest[1, 2] - np.median(outline)
+        assert nose == pytest.approx(-HEAD_DEPTH * mesh.face_width, rel=1e-3), cat.name
+        # The muzzle stands out from the eyes further than on the human-like landmarks.
+        eyes = mesh.rest[[33, 263], 2].mean()
+        assert eyes - mesh.rest[1, 2] > 1.2 * (cat.points[[33, 263], 2].mean() - cat.points[1, 2]), cat.name
+
+
+def test_a_depth_mapped_head_is_lit_per_pixel(meshes):
+    for cat, mesh in meshes:
+        if cat.depth is None:
+            continue
+        assert mesh.normal_map is not None, cat.name
+        grey = cat.sprite.copy()
+        grey[..., :3] = 160
+        sides = []
+        for yaw in (0.3, -0.3):
+            rotation = to_matrix(np.array([0, yaw, 0]))
+            image = mesh.render(grey, np.zeros((478, 3)), rotation).astype(float)
+            ndc = mesh._project(mesh._shape(np.zeros((478, 3))), rotation)
+            cheeks = []
+            for i in (50, 280):  # image-left and image-right cheek
+                x, y = int((ndc[i, 0] + 1) / 2 * OUT[0]), int((1 - ndc[i, 1]) / 2 * OUT[1])
+                cheeks.append(image[y - 2:y + 3, x - 2:x + 3].mean())
+            sides.append(cheeks[0] - cheeks[1])
+        assert abs(sides[0]) > 10 and np.sign(sides[0]) == -np.sign(sides[1]), (cat.name, sides)
+
+
+def test_breathing_in_lifts_the_head_on_a_swelling_chest(meshes):
+    from catcam.cat_mesh import BREATH_RISE
+
+    for cat, mesh in meshes:
+        still, full = mesh._shape(np.zeros((478, 3))), mesh._shape(np.zeros((478, 3)), breath=1.0)
+        rise = still[:, 1] - full[:, 1]
+        np.testing.assert_allclose(rise[:478][mesh.rest[:478, 1] < mesh.rest[152, 1]],
+                                   BREATH_RISE * mesh.face_width, err_msg=cat.name)  # the face rides up whole
+        assert abs(rise[mesh.rest[:, 1].argmax()]) < 1e-9, cat.name  # the chest's bottom stays
+        low = mesh.rest[:, 1] > mesh.rest[152, 1] + 0.05 * mesh.face_width
+        if low.any():  # the chest widens
+            assert np.ptp(full[low, 0]) > np.ptp(still[low, 0]), cat.name
+
+
+def test_a_dogs_tongue_hangs_out_when_you_stick_yours_out(meshes):
+    def pink_below_the_lip(mesh, image, offsets):
+        lip = mesh.offset + (mesh.rest[14, :2] + offsets[14, :2] + [0.03 * mesh.face_width, 0]) * mesh.scale
+        x, y = lip.astype(int)  # beside the groove down the tongue's middle
+        below = image[y + 3:y + int(0.1 * mesh.face_width * mesh.scale), x - 3:x + 4].astype(int)
+        return ((below[..., 2] > 170) & (below[..., 2] - below[..., 1] > 60)).mean()
+
+    dogs = [(cat, mesh) for cat, mesh in meshes if mesh.dog]
+    assert [cat.name for cat, _ in dogs] == ["Goldie"]
+    for cat, mesh in dogs:
+        closed, wide = np.zeros((478, 3)), mesh.open_jaw(0.14)
+        for offsets, out, pink in ((closed, 0, False), (wide, 0, False), (closed, 1, True), (wide, 1, True)):
+            image = mesh.render(cat.sprite, offsets, np.eye(3), tongue_out=out)
+            share = pink_below_the_lip(mesh, image, offsets)
+            assert share > 0.8 if pink else share < 0.05, (cat.name, out)
+        turned = to_matrix(np.array([0, 0.3, 0]))
+        image = mesh.render(cat.sprite, wide, turned, tongue_out=1)
+        assert _holes_in_face(mesh, image, wide, turned) == 0, cat.name
 
 
 def test_mouth_takes_on_the_lip_colour(meshes):

@@ -39,6 +39,16 @@ def test_load_reads_paw_photos(tmp_path):
     assert list(cats.load("Amy", tmp_path).paws) == [("back", "left")]
 
 
+def test_load_reads_the_depth_map(tmp_path):
+    _prepare(tmp_path, "Amy")
+    assert cats.load("Amy", tmp_path).depth is None
+    cv2.imwrite(str(tmp_path / "Amy" / "depth.png"), np.full((8, 8), 65535, np.uint16))
+    np.testing.assert_allclose(cats.load("Amy", tmp_path).depth, 1)
+    cv2.imwrite(str(tmp_path / "Amy" / "depth.png"), np.zeros((4, 4), np.uint16))
+    with pytest.raises(ValueError, match="size of the cutout"):
+        cats.load("Amy", tmp_path)
+
+
 def test_load_rejects_bad_landmarks(tmp_path):
     _prepare(tmp_path, "Odd", points_shape=(10, 3))
     with pytest.raises(ValueError, match="landmarks"):
@@ -54,6 +64,9 @@ def test_load_rejects_missing_cutout(tmp_path):
 
 def test_shipped_cats(real_cats):
     assert [c.name for c in real_cats] == ["Balint", "David", "Goldie", "Laci", "Mate", "TMarci", "VMarci"]
+    assert [c.name for c in real_cats if c.depth is not None] == ["Goldie"]
+    assert [c.name for c in real_cats if c.kind == "dog"] == ["Goldie"]
+    assert {c.kind for c in real_cats} == {"cat", "dog"}
     for cat in real_cats:
         assert cat.sprite.shape[2] == 4
         assert cat.points.shape == (478, 3)

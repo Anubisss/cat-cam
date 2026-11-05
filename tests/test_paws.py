@@ -8,7 +8,7 @@ from catcam.paws import (
     CHIN,
     PHOTO_ARM_LENGTH,
     Paws,
-    closedness,
+    finger_curls,
     palm_facing,
     palm_toward,
     paw_set,
@@ -158,29 +158,69 @@ def test_palms_show_the_sole_and_backs_the_top():
 
 
 def _fingers(reach):
-    """Hand points (px), fingers up, tips at `reach` times the knuckles' distance from the wrist."""
+    """Hand points (px), fingers up (index on the image left), tips at `reach`
+    (one per finger, index to pinky, or one for all) times the knuckles' distance from the wrist."""
     pts = np.zeros((21, 2))
     pts[0] = (0, 100)
-    for tip, mcp, x in ((8, 5, -30), (12, 9, -10), (16, 13, 10), (20, 17, 30)):
+    knuckles = ((8, 5, -30), (12, 9, -10), (16, 13, 10), (20, 17, 30))
+    for (tip, mcp, x), r in zip(knuckles, np.broadcast_to(reach, 4)):
         pts[mcp] = (x, 0)
-        pts[tip] = pts[0] + reach * (pts[mcp] - pts[0])
+        pts[tip] = pts[0] + r * (pts[mcp] - pts[0])
     return pts
 
 
 def test_fist_or_open_hand():
-    assert closedness(_fingers(2.0)) == 0
-    assert closedness(_fingers(0.8)) == 1
-    assert 0 < closedness(_fingers(1.25)) < 1
+    np.testing.assert_array_equal(finger_curls(_fingers(2.0)), 0)
+    np.testing.assert_array_equal(finger_curls(_fingers(0.8)), 1)
+    assert (0 < finger_curls(_fingers(1.25))).all() and (finger_curls(_fingers(1.25)) < 1).all()
+
+
+def test_each_finger_bends_on_its_own():
+    np.testing.assert_array_equal(finger_curls(_fingers([2.0, 0.8, 2.0, 2.0])), [0, 1, 0, 0])
+
+
+def _toe_tops(curls):
+    """Top row of the paw drawn upright, per column, with the toes curled by curls (from the left)."""
+    paw = photo_paw(_photo_paw((0, 0, 255)))
+    paws = Paws(out_width=400)
+    paws.slots = {"Right": {"presence": 1.0, "params": np.array([200, 150, 120, 0, -1, -1, *curls])}}
+    drawn = paws.draw(np.zeros((400, 400, 3), np.uint8), paw).any(axis=2)
+    assert drawn[-1].any()  # the arm is unchanged
+    return np.where(drawn.any(axis=0), drawn.argmax(axis=0), 400)
 
 
 def test_closed_paws_curl_their_toes_in():
-    paw = photo_paw(_photo_paw((0, 0, 255)))
-    tops = []
-    for closed in (0.0, 1.0):
-        paws = Paws(out_width=400)
-        paws.slots = {"Right": {"presence": 1.0, "params": np.array([200, 150, 120, 0, -1, -1, closed])}}
-        drawn = paws.draw(np.zeros((400, 400, 3), np.uint8), paw)
-        rows = np.flatnonzero(drawn.any(axis=(1, 2)))
-        tops.append(rows.min())
-        assert rows.max() == 399  # the arm is unchanged
-    assert tops[1] > tops[0] + 10  # the toes are shorter
+    open_paw, fist = _toe_tops([0, 0, 0, 0]), _toe_tops([1, 1, 1, 1])
+    assert fist.min() > open_paw.min() + 10  # the toes are shorter
+    across_a_toe = slice(200 - int(0.2 * 120), 200 - int(0.04 * 120))
+    assert np.ptp(fist[across_a_toe] - open_paw[across_a_toe]) <= 2  # slid down, not flattened
+
+
+def test_one_bent_finger_curls_only_its_toe():
+    open_paw, one = _toe_tops([0, 0, 0, 0]), _toe_tops([1, 0, 0, 0])
+    left, right = 200 - int(0.32 * 120), 200 + int(0.32 * 120)  # the outer toes' middles
+    assert one[left] > open_paw[left] + 5
+    assert one[right] == open_paw[right]
+
+
+def test_a_finger_raised_from_a_fist_stands_up():
+    open_paw, middle = _toe_tops([0, 0, 0, 0]), _toe_tops([1, 0, 1, 1])
+    finger, outer = 200 - int(0.12 * 120), 200 + int(0.32 * 120)
+    assert middle[finger] < open_paw[finger] - 0.5 * 120  # half a paw width taller
+    assert middle[outer] > open_paw[outer] + 5  # the others are curled in
+    assert (middle < 400).sum() <= (open_paw < 400).sum()  # no wider for it
+
+
+def test_fingers_bend_the_toes_on_their_side_of_the_paw():
+    """A hand showing its back, index finger bent: the toe on the index's side
+    of the screen curls, whichever way up the hand is."""
+    for flip in (False, True):
+        pts = _fingers([0.8, 2.0, 2.0, 2.0])
+        if flip:  # pointing down: the index is now on the image right... of the upside-down paw
+            pts = pts * (1, -1)
+        hand = [SimpleNamespace(x=0.5 + x / 1280, y=0.5 + y / 720) for x, y in pts]
+        hands = SimpleNamespace(hand_landmarks=[hand], handedness=[[SimpleNamespace(category_name="Right")]])
+        paws = Paws(out_width=1280)
+        paws.update(hands, None, (1280, 720), 1 / 30, np.array([640.0, 300.0]), 300.0)
+        curls = paws.slots["Right"]["params"][6:]
+        np.testing.assert_allclose(curls, [0, 0, 0, 1] if flip else [1, 0, 0, 0], atol=1e-9)

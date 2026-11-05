@@ -6,6 +6,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from catcam import dog_lips
+from catcam.depth import depth_file
 from catcam.paths import ASSETS, PORTRAITS
 from catcam.paw_photos import is_paw_photo, paw_files
 from catcam.voice import load_sounds
@@ -14,11 +16,13 @@ from catcam.voice import load_sounds
 @dataclass(frozen=True)
 class CatAssets:
     name: str
-    sprite: np.ndarray  # BGRA cutout
+    sprite: np.ndarray  # BGRA cutout (a dog's with dog lips, see catcam.dog_lips)
     points: np.ndarray  # (478, 3) face landmarks in sprite px (z uses the x scale)
     background: np.ndarray  # (3,) BGR colour of the portrait's backdrop
     paws: dict  # {(view, hand): BGRA paw photo}, see catcam.paw_photos; empty if none
     sounds: list  # mono sounds from voice/, see catcam.voice; empty if none
+    depth: np.ndarray | None = None  # (h, w) 0..1, nearer = larger, see catcam.depth; None if not prepared
+    kind: str = "cat"  # "dog" if kind.txt says so: dog lips, teeth and tongue
 
 
 def available(assets: Path = ASSETS) -> list[str]:
@@ -56,4 +60,12 @@ def load(name: str, assets: Path = ASSETS) -> CatAssets:
     for key, path in paw_files(name, assets).items():
         if path.is_file():
             paws[key] = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    return CatAssets(name, sprite, points, background, paws, load_sounds(folder / "voice"))
+    depth = None
+    if depth_file(name, assets).is_file():
+        depth = cv2.imread(str(depth_file(name, assets)), cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535
+        if depth.shape != sprite.shape[:2]:
+            raise ValueError(f"{depth_file(name, assets)} is not the size of the cutout")
+    kind = (folder / "kind.txt").read_text().strip() if (folder / "kind.txt").is_file() else "cat"
+    if kind == "dog":
+        sprite = dog_lips.repaint(sprite, points)
+    return CatAssets(name, sprite, points, background, paws, load_sounds(folder / "voice"), depth, kind)
