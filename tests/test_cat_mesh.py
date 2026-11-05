@@ -160,17 +160,3 @@ def test_mouth_takes_on_the_lip_colour(meshes):
     reddest = max(meshes, key=lambda cm: cm[1].lip_tint[0])[1]
     palest = min(meshes, key=lambda cm: cm[1].lip_tint[0])[1]
     assert reddest.lip_tint[0] > palest.lip_tint[0] + 0.1  # the cats' lips really differ
-
-
-def test_lips_snap_to_the_photos_crease_only_when_clearly_off(real_cats):
-    from catcam.cat_mesh import UPPER_INNER_LIP, _snap_mouth
-
-    for cat in real_cats:
-        width = np.ptp(cat.points[:, 0])
-        moved = (_snap_mouth(cat.sprite, cat.points, width) - cat.points)[:, 1] / width
-        if cat.name == "Balint":  # fitted onto his pouty lower lip
-            assert moved[13] < -0.03
-            assert moved[UPPER_INNER_LIP[0]] == 0  # the corners stay
-            assert np.abs(moved[[1, 10, 152]]).max() == 0  # nose, forehead, chin stay
-        else:
-            assert not moved.any(), cat.name

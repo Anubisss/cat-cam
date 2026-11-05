@@ -18,6 +18,7 @@ from scipy.spatial import Delaunay
 from catcam.cat_face import EYES
 from catcam.ears import bend, find_ears
 from catcam.lighting import shading, vertex_normals
+from catcam.mouth_fit import LOWER_INNER_LIP, OUTER_LIPS, UPPER_INNER_LIP, snap_mouth
 
 OUTLINE_POINTS = 90
 SKULL_DEPTH = 0.15  # head outline sits this far (in face widths) behind the nearest face points
@@ -38,17 +39,6 @@ LIP_SEAM = 0.0015  # half the gap between the lips of the closed mouth
 # around the mouth follows with a falloff (in mouth half-widths: fully inside
 # MOUTH_GROW[0], not at all beyond [1]; half as far up and down).
 MOUTH_MIN = 0.33
-# The fitted line between the lips can miss the photo's, e.g. land on a pouty
-# lower lip. The photo's is the darkest line (the crease) near the fitted one:
-# searched SEAM_SEARCH (up, down) face widths around it, over columns
-# SEAM_BAND wide. Where all of the mouth agrees it is more than SEAM_TOLERANCE
-# off, the lips move onto it, less toward the corners: the upper lip gets
-# thinner and the lower one thicker (or the other way around), at most by
-# SEAM_MAX_SQUEEZE of a lip.
-SEAM_SEARCH = (0.05, 0.03)
-SEAM_BAND = 0.012
-SEAM_TOLERANCE = 0.015
-SEAM_MAX_SQUEEZE = 0.7
 MOUTH_GROW = (1.3, 2.5)
 # Framing: ear tips and chin as fractions of the screen height.
 TOP_MARGIN, CHIN_LINE = 0.04, 0.93  # room above for perked ears
@@ -67,16 +57,9 @@ EYE_CORNERS = ((33, 133), (263, 362))  # image-left eye, image-right eye
 # Each face point's movement is averaged with its neighbours' (except on the
 # lips, which must stay crisp to open), which evens out tracking noise.
 SMOOTHING = 0.035  # face widths
-OUTER_LIPS = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,
-              375, 321, 405, 314, 17, 84, 181, 91, 146]  # around the mouth
-OUTER_UPPER_LIP = OUTER_LIPS[:11]  # corner (61) to corner (291), along the top
-OUTER_LOWER_LIP = OUTER_LIPS[10:] + OUTER_LIPS[:1]  # corner (291) back to corner (61)
 
-# Inner lip contours, both running corner (78) to corner (308).
-UPPER_INNER_LIP = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308]
 # Outer and inner lip points whose midpoints lie on the lips.
 LIP_SAMPLES = [(0, 13), (17, 14), (39, 81), (269, 311), (84, 87), (314, 317)]
-LOWER_INNER_LIP = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308]
 
 FACE_VERTEX_SHADER = """
 #version 330
@@ -259,48 +242,6 @@ def _outline(alpha: np.ndarray) -> np.ndarray:
     return contour[(np.arange(OUTLINE_POINTS) * step).astype(int)]
 
 
-def _snap_mouth(sprite: np.ndarray, landmarks: np.ndarray, face_width: float) -> np.ndarray:
-    """landmarks with the inner lips moved onto the photo's crease between the
-    lips, if the fit clearly missed it."""
-    gray = cv2.cvtColor(sprite[..., :3], cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray = cv2.GaussianBlur(gray, (0, 0), 0.006 * face_width)
-    upper, lower = UPPER_INNER_LIP[2:-2], LOWER_INNER_LIP[2:-2]  # away from the corners
-    misses = []
-    for x, y in (landmarks[upper, :2] + landmarks[lower, :2]) / 2:
-        ys = np.arange(int(y - SEAM_SEARCH[0] * face_width), int(y + SEAM_SEARCH[1] * face_width))
-        xs = np.arange(int(x - SEAM_BAND * face_width), int(x + SEAM_BAND * face_width) + 1)
-        ys, xs = np.clip(ys, 0, len(gray) - 1), np.clip(xs, 0, gray.shape[1] - 1)
-        profile = gray[np.ix_(ys, xs)].mean(axis=1)
-        misses.append(ys[np.argmin(profile)] - y)
-    misses = np.array(misses)
-    shift = float(np.median(misses))
-    if abs(shift) < SEAM_TOLERANCE * face_width or not (np.sign(misses) == np.sign(shift)).all():
-        return landmarks
-    taper = np.sin(np.pi * np.linspace(0, 1, len(UPPER_INNER_LIP)))  # 0 at the corners
-    seam = (landmarks[UPPER_INNER_LIP, :2] + landmarks[LOWER_INNER_LIP, :2]) / 2
-
-    def line(indices, x):
-        pts = landmarks[indices, :2]
-        order = np.argsort(pts[:, 0])
-        return np.interp(x, pts[order, 0], pts[order, 1])
-
-    # Each column of the mouth is remapped: the outer lip lines stay, the line
-    # between the lips moves by `move`, and the lips in between stretch.
-    out = landmarks.copy()
-    x, y = landmarks[:, 0], landmarks[:, 1]
-    top, bottom = line(OUTER_UPPER_LIP, x), line(OUTER_LOWER_LIP, x)
-    middle = np.interp(x, seam[:, 0], seam[:, 1])
-    move = np.interp(x, seam[:, 0], shift * taper)
-    move = np.clip(move, -SEAM_MAX_SQUEEZE * (middle - top), SEAM_MAX_SQUEEZE * (bottom - middle))
-    inside = (x > seam[:, 0].min()) & (x < seam[:, 0].max()) & (y >= top) & (y <= bottom)
-    upper = inside & (y <= middle)
-    lower = inside & (y > middle)
-    stretch = np.where(upper, (y - top) / np.maximum(middle - top, 1e-6),
-                       (bottom - y) / np.maximum(bottom - middle, 1e-6))
-    out[upper | lower, 1] += (move * stretch)[upper | lower]
-    return out
-
-
 def _closed_mouth(face: np.ndarray, face_width: float) -> np.ndarray:
     """The face with its lips together, so at rest no mouth opening shows.
 
@@ -471,7 +412,7 @@ class CatMesh:
 
         self.face_count = len(landmarks)
         self.face_width = np.ptp(landmarks[:, 0])
-        landmarks = _snap_mouth(sprite, landmarks, self.face_width)
+        landmarks = snap_mouth(sprite, landmarks, self.face_width)
         face = _closed_mouth(landmarks, self.face_width)
         outline_xy = _outline(sprite[..., 3])
         outline = np.column_stack([outline_xy, _outline_depth(outline_xy, face, self.face_width)])
