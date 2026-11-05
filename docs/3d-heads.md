@@ -11,6 +11,10 @@ Everything after generation is automatic. The eyes, the mouth, expressions,
 blinks, ears and shading all come from the import and the app; there is
 nothing to draw or rig by hand.
 
+TRELLIS.2 is free and local. [Meshy](https://www.meshy.ai) (paid, online)
+makes more detailed heads, and the same import takes them; see
+[Heads from Meshy](#heads-from-meshy).
+
 ## What you need
 
 - An Apple Silicon Mac. The heads were made on an M5 MacBook Pro with 32 GB;
@@ -115,6 +119,47 @@ holds the exact versions and fixes the heads were made with.
 4. **Commit** `assets/cats/<Name>/head3d.npz` and `head3d.png`. They are
    about 15 MB per cat.
 
+## Heads from Meshy
+
+TMarci's head was made with Meshy's Image to 3D instead of TRELLIS:
+
+1. **Settings:**
+   - Multi-view on, with the front portrait as the main view and the
+     profiles and back as Left, Back and Right. "Left" faces the image's
+     left.
+   - Meshy 7.1 Flagship, High Detail, Ultra 2K.
+   - Texture on, with the Meshy 7 texture model at 2K and no PBR maps.
+   - Pose off, Image Enhancement off, licence Private.
+2. **Download** it as GLB. Meshy's heads have millions of triangles, far
+   too many to move every frame. Reduce a copy to 300,000 (your download
+   stays as it is):
+
+   ```sh
+   uv run --no-project --with pymeshlab --with trimesh --with pillow python - <head.glb> <small.glb> <<'PY'
+   import sys, tempfile, pymeshlab, trimesh
+   head = next(iter(trimesh.load(sys.argv[1]).geometry.values()))
+   ms = pymeshlab.MeshSet()
+   ms.add_mesh(pymeshlab.Mesh(vertex_matrix=head.vertices, face_matrix=head.faces,
+                              v_tex_coords_matrix=head.visual.uv))
+   ms.compute_texcoord_transfer_vertex_to_wedge()
+   ms.meshing_decimation_quadric_edge_collapse_with_texture(
+       targetfacenum=300000, preserveboundary=True, preservenormal=True)
+   with tempfile.TemporaryDirectory() as tmp:  # an .obj keeps the texture coordinates per corner
+       ms.save_current_mesh(f"{tmp}/small.obj")
+       small = trimesh.load(f"{tmp}/small.obj", process=False, force="mesh")
+   small.visual = trimesh.visual.TextureVisuals(
+       uv=small.visual.uv, material=trimesh.visual.material.PBRMaterial(
+           baseColorTexture=head.visual.material.baseColorTexture))
+   small.export(sys.argv[2])
+   PY
+   ```
+3. **Import** it as above. Add `--own-mouth` to keep the head's own mouth
+   instead of the added one (see below):
+
+   ```sh
+   uv run --with trimesh python -m catcam.head3d_import <small.glb> <Name> --own-mouth
+   ```
+
 ## How the eyes and mouth work
 
 **Eyes.** TRELLIS's eyes come out blurry and empty-looking. The import finds
@@ -141,6 +186,20 @@ it is generated. When the app loads a 3D head it does three things:
 The mouth is the same for every cat, sized to its lips. To change it, edit
 the constants at the top of `mouth3d.py`, in mouth widths: tooth sizes and
 positions, the tongue, the hinge, and the colours.
+
+**Its own mouth instead** (`--own-mouth`): no teeth, tongue or cavity are
+added. The lips still split along the mouth line and the jaw still drops
+with yours, and the head's own inside shows between them as a dark hollow.
+TMarci's is like that.
+
+**The mouth line** is where the lips meet in the portrait, found when the cat
+is prepared. The fit is made for cats; on other faces it can land elsewhere.
+A golden retriever's lands on its nose, for example, because its mouth is a
+smile whose corners are its highest points. Then write the line yourself in
+`all_cats/<Name>Mouth.txt`: one `x, y` per line, in portrait pixels, from
+one mouth corner to the other. Then prepare the cat again with
+`--force`, and import its head again. `all_cats/TMarciMouth.txt` is an
+example.
 
 **Everything else** comes from the photo cat:
 - **Expressions:** the head is tied to the photo cat's face points, so every

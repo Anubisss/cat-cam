@@ -3,14 +3,18 @@ assets: the mesh, its texture with the cat's real eyes painted in from the
 portrait, and where every vertex and face landmark sits in the portrait, which
 is what lets the head take on the 2D cat's expressions.
 
-    uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name>
+    uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name> [--own-mouth]
+
+--own-mouth keeps the head's own mouth: its lips part and its jaw moves, but no
+teeth, tongue or mouth cavity are added (see catcam.mouth3d).
 """
 
-import sys
+import argparse
 
 import cv2
 import moderngl
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 
 from catcam import cats
 from catcam.cat_face import EYES
@@ -23,6 +27,12 @@ EYE_GROW = 0.35  # painted eye area reaches this share of the eye's width past i
 EYE_FEATHER = 0.15  # soft edge, eye widths
 EYE_SEARCH = 0.4  # how far (eye widths) to look for the model's eye around the photo's
 NOSE = [1, 2, 4, 5, 98, 327, 195, 197, 48, 278]  # landmarks around the nose
+GUTTER = 8  # texels past the uv charts' edges that get painted too (filtering reads them)
+SOLID = 250  # portrait alpha from which a pixel counts as the cat when matching colours
+# Specks: the texture baker leaves near-black blobs (thin ears especially). A blob is
+# darker than SPECK_DARK (grey 0..255), SPECK_GAP darker than its surroundings (the
+# median over SPECK_WINDOW texels) and under SPECK_AREA texels, so dark fur stays.
+SPECK_DARK, SPECK_GAP, SPECK_WINDOW, SPECK_AREA = 15, 60, 41, 600
 
 DEPTH_VS = """
 #version 330
@@ -211,16 +221,63 @@ def eye_paint(raster, cam, depth, texture, sprite, points):
         a = sample(mask, px - shift)[:, 0] * front
         mine = a > weight
         weight[mine], source[mine] = a[mine], (px - shift)[mine]
+    idx, source, weight = into_gutters(idx, texture.shape[0], source, weight)
     keep = weight > 1e-3
     return idx[keep].astype("i4"), source[keep], np.clip(weight[keep], 0, 1)
 
 
-def import_glb(glb: str, name: str):
+def into_gutters(idx, size, source, weight):
+    """Texels just outside the uv charts take the paint of the nearest one inside:
+    bilinear filtering and mipmaps read them at a chart's edge, and left as they were
+    (the model's own eye) they show as dark cracks over the painted eye."""
+    covered = np.zeros((size, size), bool)
+    covered.flat[idx] = True
+    dist, (iy, ix) = distance_transform_edt(~covered, return_indices=True)
+    gutter = np.nonzero((dist.ravel() > 0) & (dist.ravel() <= GUTTER))[0]
+    lookup = np.full(size * size, -1)
+    lookup[idx] = np.arange(len(idx))
+    nearest = lookup[(iy * size + ix).ravel()[gutter]]
+    return (np.concatenate([idx, gutter]), np.concatenate([source, source[nearest]]),
+            np.concatenate([weight, weight[nearest]]))
+
+
+def despeckle(texture: np.ndarray) -> np.ndarray:
+    """The texture (BGR uint8) with the baker's black specks filled in from around them."""
+    grey = cv2.cvtColor(texture, cv2.COLOR_BGR2GRAY)
+    around = cv2.medianBlur(grey, SPECK_WINDOW)
+    dark = ((grey < SPECK_DARK) & (around.astype(int) - grey > SPECK_GAP)).astype(np.uint8)
+    dark = cv2.dilate(dark, np.ones((3, 3), np.uint8))  # their soft edges too
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(dark)
+    small = np.zeros(n, bool)
+    small[1:] = stats[1:, cv2.CC_STAT_AREA] < SPECK_AREA
+    return cv2.inpaint(texture, small[labels].astype(np.uint8) * 255, 5, cv2.INPAINT_TELEA)
+
+
+def match_colours(raster, cam, depth, texture, sprite) -> np.ndarray:
+    """The texture with its colours matched to the portrait's: the model's come out
+    duller and darker. Each Lab channel's distribution over the face seen from the
+    front is mapped onto the portrait's there, and that mapping applied everywhere."""
+    h, w = sprite.shape[:2]
+    _, idx, px, front = model_view(raster, cam, depth, texture, (w, h))
+    alpha = sample(sprite[..., 3:].astype(np.float32), px)[:, 0]
+    seen = front & (alpha >= SOLID)
+    lab = lambda bgr: cv2.cvtColor(bgr.reshape(-1, 1, 3).astype(np.float32) / 255,  # noqa: E731
+                                   cv2.COLOR_BGR2LAB).reshape(-1, 3)
+    model = lab(texture.reshape(-1, 3))
+    ours, theirs = model[idx[seen]], lab(sample(sprite[..., :3].astype(np.float32), px[seen]))
+    q = np.linspace(0, 1, 257)
+    for c in range(3):
+        model[:, c] = np.interp(model[:, c], np.quantile(ours[:, c], q), np.quantile(theirs[:, c], q))
+    bgr = cv2.cvtColor(model.reshape(-1, 1, 3), cv2.COLOR_LAB2BGR).reshape(texture.shape)
+    return np.clip(bgr * 255, 0, 255)
+
+
+def import_glb(glb: str, name: str, own_mouth: bool = False):
     import trimesh  # only needed here
 
     mesh = trimesh.load(glb, force="mesh")
     vertices = mesh.vertices.astype(np.float64)
-    texture = np.asarray(mesh.visual.material.baseColorTexture.convert("RGB"))[..., ::-1].copy()
+    texture = despeckle(np.asarray(mesh.visual.material.baseColorTexture.convert("RGB"))[..., ::-1].copy())
     cat = cats.load(name)
     sprite, points = cat.sprite, cat.points
     h, w = sprite.shape[:2]
@@ -230,6 +287,7 @@ def import_glb(glb: str, name: str):
     print(f"{name}: portrait outline overlap {iou:.3f}")
     cam = align_features(raster, cam, texture.astype(np.float32), sprite, points)
     depth = raster.depth(cam, (w, h))
+    texture = match_colours(raster, cam, depth, texture.astype(np.float32), sprite)
 
     # Every vertex's spot in the portrait.
     photo_px, _ = cam.project(vertices)
@@ -250,10 +308,17 @@ def import_glb(glb: str, name: str):
         uv=mesh.visual.uv.astype("f4"), faces=mesh.faces.astype("i4"),
         photo_px=photo_px.astype("f4"), landmarks=landmarks.astype("f4"),
         cam_rot=cam.rot.astype("f4"), cam_scale=np.float32(cam.scale),
-        eye_index=eye_index, eye_px=eye_px.astype("f4"), eye_weight=eye_weight.astype("f4"))
+        eye_index=eye_index, eye_px=eye_px.astype("f4"), eye_weight=eye_weight.astype("f4"),
+        own_mouth=own_mouth)
     cv2.imwrite(str(texture_file), texture)
     print(f"  {len(vertices)} vertices, {len(eye_index)} eye texels -> {mesh_file.parent}")
 
 
 if __name__ == "__main__":
-    import_glb(*sys.argv[1:3])
+    parser = argparse.ArgumentParser(description="Import a generated 3D head for a cat.")
+    parser.add_argument("glb", help="the head, a .glb with its texture")
+    parser.add_argument("name", help="the cat, as in all_cats/<Name>.png")
+    parser.add_argument("--own-mouth", action="store_true",
+                        help="keep the head's own mouth: add no teeth or tongue")
+    args = parser.parse_args()
+    import_glb(args.glb, args.name, args.own_mouth)

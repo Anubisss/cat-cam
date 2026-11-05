@@ -6,7 +6,7 @@ catcam.head3d_import, which also records where every vertex sits in the
 portrait. That is what lets it borrow what the 2D cat does: each vertex
 moves with the face landmarks around it (expressions, the jaw), the eye areas
 of the texture blink with the portrait's eyelids, and the ears bend about the
-same hinges. The lips are cut apart and part over a real 3D mouth
+same hinges. The lips part over a real 3D mouth
 (catcam.mouth3d) whose jaw swings open with your lower lip. Head3D stands in
 for CatMesh: same render() and face_on_screen().
 """
@@ -34,12 +34,17 @@ FALLOFF = 0.25  # wide, so the whole lower jaw and chin move together instead of
 # Near the mouth, vertices only follow landmarks on their own side of the lips, so the
 # lips part instead of stretching: this far past the mouth corners and above/below the lip line.
 MOUTH_ZONE = (0.06, 0.15)
+LIP_EDGE = 0.03  # face widths: skin this close to the line between the lips is the lips' inner edge
+# Face widths: only skin this close to a face landmark (in 3D) counts as the lips; the back
+# of the head lines up with the mouth in the portrait too.
+ON_FACE = 0.1
 DEPTH_SPAN = 1.5  # model units in front of / behind the head kept in the depth range
 # Image axes (x right, y down, z away from the camera) <-> model axes (y up, z toward it).
 FLIP = np.diag([1.0, -1.0, -1.0])
 MOUTH_CORNERS = (UPPER_INNER_LIP[0], UPPER_INNER_LIP[-1])
 LIP_MIDDLE = (13, 14)  # where the upper and lower inner lips meet in the middle
 JAW_MAX = 1.0  # radians, the most the jaw tilts; beyond that it just drops with the lip
+OWN_MOUTH_INSIDE = (0.16, 0.06, 0.06)  # RGB of a head's own inside, seen between its parted lips
 
 VERTEX_SHADER = """
 #version 330
@@ -52,11 +57,16 @@ uniform vec2 shade_range;
 in vec3 in_pos;
 in vec3 in_normal;
 in vec2 in_uv;
+in float in_lip;
 out vec2 uv;
 out float shade;
+out vec3 normal;
+out float lip;
 void main() {
     gl_Position = proj * vec4(rot * in_pos + shift, 1.0);
     uv = in_uv;
+    lip = in_lip;
+    normal = rot * in_normal;
     // The texture already has the light of the photo it came from baked in; only the
     // change in facing since then brightens or darkens it (see catcam.lighting).
     float before = clamp(dot(in_normal, light), 0.0, 1.0);
@@ -64,13 +74,41 @@ void main() {
     shade = clamp(1.0 + strength * (after - before), shade_range.x, shade_range.y);
 }
 """
+# Whether screen px p is inside the opening between the lips (a polygon, crossing test).
+IN_OPENING = """
+uniform vec2 opening[22];  // the gap between the lips on screen (px), around its edge
+bool in_opening(vec2 p) {
+    bool inside = false;
+    for (int i = 0, j = 21; i < 22; j = i++) {
+        vec2 a = opening[i], b = opening[j];
+        if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
+            inside = !inside;
+    }
+    return inside;
+}
+"""
 FRAGMENT_SHADER = """
 #version 330
 uniform sampler2D tex;
+uniform bool seam;       // drawing the skin across the lips, which gives way where they part
+uniform bool own_mouth;  // nothing added inside: the head's own inside shows between the lips...
+uniform vec3 inside;     // ...in this colour (BGR)
 in vec2 uv;
 in float shade;
+in vec3 normal;
+in float lip;  // 1 on the lips' inner edge, which stretches into the gap as they part
 out vec4 color;
-void main() { color = vec4(texture(tex, uv).rgb * shade, 1.0); }
+""" + IN_OPENING + """
+void main() {
+    bool open = in_opening(gl_FragCoord.xy);
+    if (seam && open) discard;
+    if (own_mouth && open && (!gl_FrontFacing || lip > 0.5)) {
+        // Darker where the inside turns away from the camera, so it reads as a hollow.
+        color = vec4(inside * (0.35 + 0.65 * abs(normalize(normal).z)), 1.0);
+        return;
+    }
+    color = vec4(texture(tex, uv).rgb * shade, 1.0);
+}
 """
 # The mouth parts (catcam.mouth3d): the jaw half swings about the hinge, the rest
 # moves with the upper lip; lit by a light from the camera's side, darker deep inside.
@@ -100,22 +138,11 @@ void main() {
 """
 MOUTH_FRAGMENT_SHADER = """
 #version 330
-uniform vec2 opening[22];  // the gap between the lips on screen (px), around its edge
 in vec3 colour;
 in vec3 normal;
 in float light;
 out vec4 color;
-
-bool in_opening(vec2 p) {
-    bool inside = false;
-    for (int i = 0, j = 21; i < 22; j = i++) {
-        vec2 a = opening[i], b = opening[j];
-        if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
-            inside = !inside;
-    }
-    return inside;
-}
-
+""" + IN_OPENING + """
 void main() {
     // Only seen through the mouth: parts that would poke out through the chin or
     // cheeks (which slope back faster than the mouth inside) stay hidden.
@@ -150,13 +177,19 @@ def sample(image: np.ndarray, px: np.ndarray, width: int = 4096) -> np.ndarray:
     return cv2.remap(image, *maps, cv2.INTER_LINEAR).reshape(-1, image.shape[2])[:n]
 
 
+def lip_line(points):
+    """y of the line between the lips (portrait px) at given x."""
+    seam = (points[UPPER_INNER_LIP, :2] + points[LOWER_INNER_LIP, :2]) / 2
+    order = np.argsort(seam[:, 0])
+    return lambda x: np.interp(x, seam[order, 0], seam[order, 1])
+
+
 def lip_sides(photo_px, points, face_width):
     """For each vertex: whether it is near the mouth, below the line between the lips,
     and between the mouth corners (all in the portrait), and for each landmark whether
     it belongs below the line."""
     seam = (points[UPPER_INNER_LIP, :2] + points[LOWER_INNER_LIP, :2]) / 2
-    order = np.argsort(seam[:, 0])
-    line_y = lambda x: np.interp(x, seam[order, 0], seam[order, 1])  # noqa: E731
+    line_y = lip_line(points)
     left, right = seam[:, 0].min(), seam[:, 0].max()
     reach_x, reach_y = (r * face_width for r in MOUTH_ZONE)
     x, y = photo_px[:, 0], photo_px[:, 1]
@@ -187,12 +220,13 @@ def follow_weights(vertices, photo_px, landmarks, points, face_model, face_width
     return csr_matrix((weights.ravel(), (rows, nearest.ravel())), shape=(len(photo_px), len(points)))
 
 
-def cut_lips(faces, photo_px, points, face_width):
-    """faces without those bridging the lips between the mouth corners, so the mouth opens."""
+def lip_seam(faces, photo_px, points, face_width, on_face) -> np.ndarray:
+    """Which faces bridge the lips between the mouth corners: they give way where the
+    mouth opens. on_face: which vertices are on the face (not behind it)."""
     _, vertex_below, inside, _ = lip_sides(photo_px, points, face_width)
     sides = vertex_below[faces]
-    bridging = inside[faces].all(axis=1) & (sides.any(axis=1) != sides.all(axis=1))
-    return faces[~bridging]
+    lips = (inside & on_face)[faces].all(axis=1)
+    return lips & (sides.any(axis=1) != sides.all(axis=1))
 
 
 def mouth_frame(landmarks, facing):
@@ -253,16 +287,32 @@ class Head3D:
         self.prog["strength"].value = STRENGTH
         self.prog["shade_range"].value = SHADE_RANGE
         self.vbo = ctx.buffer(self.rest.astype("f4").tobytes(), dynamic=True)
-        self.vao = ctx.vertex_array(
-            self.prog, [(self.vbo, "3f", "in_pos"),
-                        (ctx.buffer(mesh["normals"].astype("f4").tobytes()), "3f", "in_normal"),
-                        (ctx.buffer(mesh["uv"].astype("f4").tobytes()), "2f", "in_uv")],
-            ctx.buffer(cut_lips(mesh["faces"], self.photo_px, points, face_width).astype("i4").tobytes()))
+        face_model = face_width / float(mesh["cam_scale"])
+        on_face = cKDTree(self.landmarks).query(self.rest)[0] < ON_FACE * face_model
+        _, _, inside_mouth, _ = lip_sides(self.photo_px, points, face_width)
+        seam_y = lip_line(points)(self.photo_px[:, 0])
+        lip_edge = inside_mouth & on_face & (np.abs(self.photo_px[:, 1] - seam_y) < LIP_EDGE * face_width)
+        attributes = [(self.vbo, "3f", "in_pos"),
+                      (ctx.buffer(mesh["normals"].astype("f4").tobytes()), "3f", "in_normal"),
+                      (ctx.buffer(mesh["uv"].astype("f4").tobytes()), "2f", "in_uv"),
+                      (ctx.buffer(lip_edge.astype("f4").tobytes()), "1f", "in_lip")]
+        seam = lip_seam(mesh["faces"], self.photo_px, points, face_width, on_face)
+        self.vao, self.seam_vao = (
+            ctx.vertex_array(self.prog, attributes, ctx.buffer(mesh["faces"][part].astype("i4").tobytes()))
+            if part.any() else None for part in (~seam, seam))
 
-        # The mouth: real teeth, tongue and cavity behind lips that part.
+        # The mouth: real teeth, tongue and cavity behind lips that part, unless the
+        # head keeps its own (imported with --own-mouth): then only its inside shows.
+        self.own_mouth = bool(mesh["own_mouth"]) if "own_mouth" in mesh.files else False
+        self.prog["own_mouth"].value = self.own_mouth
+        self.prog["inside"].value = OWN_MOUTH_INSIDE[::-1]
         # The portrait's camera looks straight at the face: its axis is where the face looks.
         origin, axes, width = mouth_frame(self.landmarks, mesh["cam_rot"][2].astype(np.float64))
         self.mouth_origin, self.mouth_axes, self.mouth_width = origin, axes, width
+        # The portrait's lips rarely meet exactly; the mouth opens as far as they part
+        # from there, so a closed mouth shows no gap.
+        half_gap = (self.landmarks[LOWER_INNER_LIP] - self.landmarks[UPPER_INNER_LIP]) / 2
+        self.lips_meet = np.vstack([half_gap, -half_gap[::-1]])
         parts = mouth3d.build(flat.lip_tint)
         self.mouth_prog = ctx.program(vertex_shader=MOUTH_VERTEX_SHADER,
                                       fragment_shader=MOUTH_FRAGMENT_SHADER)
@@ -335,14 +385,18 @@ class Head3D:
         return skull, jaw
 
     def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray):
-        skull, jaw = self._mouth_matrices(landmark_moves)
         # The gap between the lips on screen: upper lip left to right, lower lip back.
         ring = UPPER_INNER_LIP + LOWER_INNER_LIP[::-1]
-        lips = self.landmarks[ring] + landmark_moves[ring] @ self.to_model.T
+        lips = self.landmarks[ring] + self.lips_meet + landmark_moves[ring] @ self.to_model.T
         clip = np.column_stack([lips @ model_rot.T + self.shift, np.ones(len(ring))]) @ self.proj.T
         ndc = clip[:, :2] / clip[:, 3:]
         screen = (ndc + 1) / 2 * (self.out_w, self.out_h)  # gl_FragCoord: px from the bottom left
-        self.mouth_prog["opening"].value = [tuple(p) for p in screen]
+        opening = [tuple(p) for p in screen]
+        self.prog["opening"].value = opening
+        if self.own_mouth:
+            return
+        skull, jaw = self._mouth_matrices(landmark_moves)
+        self.mouth_prog["opening"].value = opening
         self.mouth_prog["rot"].write(model_rot.astype("f4").T.tobytes())
         self.mouth_prog["skull"].write(skull.astype("f4").T.tobytes())
         self.mouth_prog["jaw"].write(jaw.astype("f4").T.tobytes())
@@ -366,7 +420,11 @@ class Head3D:
         r.ctx.disable(moderngl.BLEND)
         self._draw_mouth(landmark_moves, model_rot)
         self.texture.use(0)
+        self.prog["seam"].value = False
         self.vao.render()
+        if self.seam_vao is not None:
+            self.prog["seam"].value = True
+            self.seam_vao.render()
         r.ctx.copy_framebuffer(r.resolved, r.msaa)
         data = r.resolved.read(components=3)
         return np.frombuffer(data, np.uint8).reshape(self.out_h, self.out_w, 3)[::-1]
