@@ -41,11 +41,13 @@ from catcam.tail import Tail, TailHand, TailSkin, tail_skin
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
-# The "Tail" checkbox in the preview's top left corner (x, y, size in preview
-# px); while it is ticked, a hand alone in view lifts a tail instead of being a
-# paw (two hands are two paws).
+# Checkboxes in the preview's top left corner (x, y, size in preview px). While
+# "Tail" is ticked, a hand alone in view lifts a tail instead of being a paw (two
+# hands are two paws); "3D head" shows the cat's 3D head, for cats that have one.
 TAIL_BOX = (16, 14, 22)
 TAIL_LABEL = "Tail (t)"
+HEAD3D_BOX = (16, 52, 22)
+HEAD3D_LABEL = "3D head (d)"
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 BLINK_SMOOTHING = 0.5  # 0..1, higher = snappier; soften small tracking changes
@@ -79,6 +81,7 @@ class Cat:
     points: np.ndarray
     eyelids: CatFace
     mesh: CatMesh | Head3D
+    head3d: Head3D | None  # the real 3D head, if this cat has one
     paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
     tail: TailSkin | None
     sprite: np.ndarray
@@ -97,21 +100,24 @@ def load_cats(renderer: Renderer) -> list[Cat]:
     cats = []
     for name in names:
         a = cat_assets.load(name)
-        cat = Cat(
+        mesh = CatMesh(renderer, a.sprite, a.points, a.background)
+        cats.append(Cat(
             name=name,
             points=a.points,
             eyelids=CatFace(a.sprite, a.points[:, :2]),
-            mesh=CatMesh(renderer, a.sprite, a.points, a.background),
+            mesh=mesh,
+            head3d=Head3D(renderer, name, mesh, a.sprite, a.points, a.background) if has_head(name) else None,
             paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
             tail=tail_skin(a.paws),
             sprite=a.sprite,
             background=a.background,
-        )
-        cats.append(cat)
-        if has_head(name):  # a 3D version too, as its own entry to compare with
-            head = Head3D(renderer, name, cat.mesh, a.sprite, a.points, a.background)
-            cats.append(replace(cat, name=f"{name} 3D", mesh=head))
+        ))
     return cats
+
+
+def shown(cat: Cat, head3d: bool) -> Cat:
+    """The cat as drawn: with its 3D head while that checkbox is ticked, if it has one."""
+    return replace(cat, mesh=cat.head3d) if head3d and cat.head3d is not None else cat
 
 
 def landmarks_px(landmarks, width, height):
@@ -200,37 +206,41 @@ def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | 
     return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=hidden)
 
 
-def draw_tail_box(view: np.ndarray, checked: bool):
-    """The tail checkbox, drawn into the preview (in place)."""
-    x, y, size = TAIL_BOX
-    label_w = cv2.getTextSize(TAIL_LABEL, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
+def draw_checkbox(view: np.ndarray, box: tuple, label: str, checked: bool):
+    """A checkbox with its label, drawn into the preview (in place)."""
+    x, y, size = box
+    label_w = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
     shade = view[y - 6:y + size + 6, x - 6:x + size + label_w + 18]
     shade[:] = (shade * 0.45).astype(np.uint8)
     cv2.rectangle(view, (x, y), (x + size, y + size), (240, 240, 240), 2, cv2.LINE_AA)
     if checked:
         tick = np.array([(x + 5, y + 11), (x + 9, y + 16), (x + 17, y + 6)], np.int32)
         cv2.polylines(view, [tick], False, (64, 170, 255), 3, cv2.LINE_AA)
-    cv2.putText(view, TAIL_LABEL, (x + size + 10, y + size - 5), cv2.FONT_HERSHEY_DUPLEX, 0.55,
+    cv2.putText(view, label, (x + size + 10, y + size - 5), cv2.FONT_HERSHEY_DUPLEX, 0.55,
                 (240, 240, 240), 1, cv2.LINE_AA)
 
 
-def on_tail_box(x: int, y: int) -> bool:
-    """Whether a click at preview px (x, y) hits the tail checkbox or its label."""
-    bx, by, size = TAIL_BOX
-    label_w = cv2.getTextSize(TAIL_LABEL, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
+def on_checkbox(x: int, y: int, box: tuple, label: str) -> bool:
+    """Whether a click at preview px (x, y) hits the checkbox or its label."""
+    bx, by, size = box
+    label_w = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.55, 1)[0][0]
     return bx - 6 <= x <= bx + size + label_w + 12 and by - 6 <= y <= by + size + 6
 
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None,
-            tail: bool = False) -> np.ndarray:
-    """Mirrored like a mirror, with hints and the tail checkbox, none of which reach the call."""
+            tail: bool = False, head3d: bool | None = None) -> np.ndarray:
+    """Mirrored like a mirror, with hints and the checkboxes, none of which reach the call.
+    head3d: whether the 3D head is on; None leaves its checkbox out (the cat has none)."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
     w, h = PREVIEW_SIZE
     bar = view[h - 34:]
     bar[:] = (bar * 0.45).astype(np.uint8)
-    put_text(view, f"{cat.name}   -   c: change cat   t: tail   n: reset neutral face   q: quit",
+    keys = "c: change cat   t: tail   " + ("d: 3D head   " if head3d is not None else "")
+    put_text(view, f"{cat.name}   -   {keys}n: reset neutral face   q: quit",
              w / 2, h - 12, 0.5, (240, 240, 240))
-    draw_tail_box(view, tail)
+    draw_checkbox(view, TAIL_BOX, TAIL_LABEL, tail)
+    if head3d is not None:
+        draw_checkbox(view, HEAD3D_BOX, HEAD3D_LABEL, head3d)
     if looking:
         put_text(view, "Looking for your face...", w / 2, 36, 0.8, (255, 255, 255), 2)
     if notice:
@@ -331,6 +341,7 @@ class Controls:
         self.picker, self.mouse = picker, mouse
         self.current, self.picking, self.picked_once = 0, True, False
         self.tail = False  # the tail checkbox
+        self.head3d = False  # the 3D head checkbox
         self.quit = False
 
     def handle(self, key: int, state: FaceState):
@@ -348,8 +359,10 @@ class Controls:
                 self.picking = False
         else:
             click = self.mouse.take_position()
-            if key == ord("t") or (click is not None and on_tail_box(*click)):
+            if key == ord("t") or (click is not None and on_checkbox(*click, TAIL_BOX, TAIL_LABEL)):
                 self.tail = not self.tail
+            if key == ord("d") or (click is not None and on_checkbox(*click, HEAD3D_BOX, HEAD3D_LABEL)):
+                self.head3d = not self.head3d
             if key == ord("c"):
                 self.picking = True
                 self.picker.hover = None
@@ -391,7 +404,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         timestamp = int((now - start) * 1000)
         state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now)
         hands = hand_tracker.detect_for_video(image, timestamp)
-        cat = cats[controls.current]
+        cat = shown(cats[controls.current], controls.head3d)
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
         tail_hand = tail_hands.update(paws.slots) if controls.tail and cat.tail is not None else None
         hand = paws.slots.get(tail_hand, {}) if tail_hand else {}
@@ -405,7 +418,8 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         else:
             looking = state.last_seen is None or now - state.last_seen > NO_FACE_HINT_AFTER
             cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None,
-                                       tail=controls.tail))
+                                       tail=controls.tail,
+                                       head3d=controls.head3d if cat.head3d is not None else None))
         key = cv2.waitKey(1) & 0xFF
         if effects.needs_permission(key, now):
             notice_until = now + 10
@@ -416,7 +430,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
 
 def check(cats: list[Cat]):
     """Draws every cat once at rest, with paws, as a quick test of the install."""
-    for cat in cats:
+    for cat in cats + [shown(c, True) for c in cats if c.head3d is not None]:
         out = render(cat, FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), tail_hand="Right")
         if out.shape != (OUT_H, OUT_W, 3) or not out.any():
             sys.exit(f"Drawing {cat.name} failed.")

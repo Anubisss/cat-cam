@@ -98,6 +98,10 @@ the tail instead of being a paw, and the rest of the tail rises from below,
 trails behind, curls and swishes on its own. Show both hands and they are
 two paws again. Untick it for paws only.
 
+Cats with a 3D head (see [docs/3d-heads.md](docs/3d-heads.md)) also get a
+**3D head** checkbox under it (or press `d`): the photo becomes a real 3D
+head that turns properly, with teeth and a tongue when the mouth opens.
+
 ### Keys (in the Cat Cam window)
 
 | Key        | What it does                                              |
@@ -106,6 +110,7 @@ two paws again. Untick it for paws only.
 | `c`        | open the cat picker (the call keeps showing your cat)     |
 | `Esc`      | close the picker                                          |
 | `t`        | tail on/off (same as the Tail checkbox)                   |
+| `d`        | 3D head on/off, for cats that have one                    |
 | `n`        | "this is my neutral face": recalibrate face and head pose |
 | `q`        | quit (closing the window or Ctrl+C also works)            |
 

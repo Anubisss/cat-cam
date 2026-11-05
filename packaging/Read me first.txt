@@ -35,6 +35,7 @@ USE
 - Raise your hands into view for paws. Tick "Tail" in the top left corner
   of the Cat Cam window (or press T): then one hand on its own lifts the
   cat's tail, and both hands are two paws.
+- Tick "3D head" (or press D) for a real 3D head, on cats that have one.
 - In the Cat Cam window: C picks another cat, Q quits.
 
 TROUBLE?

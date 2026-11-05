@@ -6,6 +6,7 @@ from catcam.app import (
     BLINK_RANGE,
     ENTER,
     ESC,
+    HEAD3D_BOX,
     TAIL_BOX,
     Controls,
     Mouse,
@@ -166,6 +167,31 @@ def test_tail_checkbox_toggles_by_click_or_key():
     assert controls.tail
     controls.handle(ord("t"), state)
     assert not controls.tail
+
+
+def test_head3d_checkbox_toggles_by_click_or_key():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)  # leave the picker
+    assert not controls.head3d
+    x, y, size = HEAD3D_BOX
+    controls.mouse(4, x + size // 2, y + size // 2, 0, None)  # click the box
+    controls.handle(-1, state)
+    assert controls.head3d and not controls.tail
+    controls.handle(ord("d"), state)
+    assert not controls.head3d
+
+
+def test_preview_shows_the_head3d_checkbox_only_for_cats_with_a_3d_head():
+    from types import SimpleNamespace
+
+    out = np.zeros((720, 1280, 3), np.uint8)
+    cat = SimpleNamespace(name="Test")
+    x, y, size = HEAD3D_BOX
+    box = np.s_[y:y + size, x:x + size]
+    assert not preview(out, cat, False)[box].any()
+    off, on = preview(out, cat, False, head3d=False)[box], preview(out, cat, False, head3d=True)[box]
+    assert off.any()
+    assert np.abs(on.astype(int) - off).sum() > 0
 
 
 def test_clicks_in_the_picker_do_not_toggle_the_tail():
