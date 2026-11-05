@@ -22,6 +22,7 @@ DEPTH_TOL = 0.01  # model units: a point this close to the front surface counts 
 EYE_GROW = 0.35  # painted eye area reaches this share of the eye's width past its contour
 EYE_FEATHER = 0.15  # soft edge, eye widths
 EYE_SEARCH = 0.4  # how far (eye widths) to look for the model's eye around the photo's
+NOSE = [1, 2, 4, 5, 98, 327, 195, 197, 48, 278]  # landmarks around the nose
 
 DEPTH_VS = """
 #version 330
@@ -148,36 +149,60 @@ def sample(image: np.ndarray, px: np.ndarray, width: int = 4096) -> np.ndarray:
     return cv2.remap(image, *maps, cv2.INTER_LINEAR).reshape(-1, channels)[:n]
 
 
-def eye_paint(raster, cam, depth, texture, sprite, points):
-    """Where the portrait's eyes go in the texture: (texel index, portrait px, weight).
-    Each eye is matched to the model's own eye first, so the two line up."""
-    size = texture.shape[0]
-    h, w = sprite.shape[:2]
-    pos, covered = raster.texels(size)
+def model_view(raster, cam, depth, texture, size):
+    """The model as the portrait's camera sees it (grey), plus each covered texel's
+    index, portrait px and whether that camera sees it."""
+    w, h = size
+    pos, covered = raster.texels(texture.shape[0])
     idx = np.nonzero(covered.ravel())[0]
     px, z = cam.project(pos.reshape(-1, 3)[idx])
     ui, vi = np.clip(px[:, 0].round().astype(int), 0, w - 1), np.clip(px[:, 1].round().astype(int), 0, h - 1)
     front = z >= depth[vi, ui] - DEPTH_TOL
-    # The model as the portrait's camera sees it, to find its eyes in.
     view = np.zeros((h, w, 3), np.float32)
     count = np.zeros((h, w), np.float32)
     np.add.at(view, (vi[front], ui[front]), texture.reshape(-1, 3)[idx[front]])
     np.add.at(count, (vi[front], ui[front]), 1)
     view = cv2.cvtColor((view / np.maximum(count, 1)[..., None]).astype(np.uint8), cv2.COLOR_BGR2GRAY)
-    photo = cv2.cvtColor(sprite[..., :3], cv2.COLOR_BGR2GRAY)
+    return view, idx, px, front
 
+
+def feature_shift(view, photo, around: np.ndarray) -> np.ndarray:
+    """Where the feature around these portrait px is in the model's view, relative
+    to the portrait (px): the model's = the portrait's + shift."""
+    width = np.ptp(around[:, 0])
+    x0, y0 = (around.min(0) - EYE_GROW * width).astype(int)
+    x1, y1 = (around.max(0) + EYE_GROW * width).astype(int)
+    r = int(EYE_SEARCH * width)
+    score = cv2.matchTemplate(view[y0 - r:y1 + r, x0 - r:x1 + r].astype(np.float32),
+                              photo[y0:y1, x0:x1].astype(np.float32), cv2.TM_CCOEFF_NORMED)
+    _, _, _, (bx, by) = cv2.minMaxLoc(score)
+    return np.array([bx - r, by - r], float)
+
+
+def align_features(raster, cam, texture, sprite, points) -> FrontCamera:
+    """The camera moved so the model's eyes and nose land on the portrait's: the
+    outline fit alone can be tens of px off at the features."""
+    h, w = sprite.shape[:2]
+    view, *_ = model_view(raster, cam, raster.depth(cam, (w, h)), texture, (w, h))
+    photo = cv2.cvtColor(sprite[..., :3], cv2.COLOR_BGR2GRAY)
+    features = [points[upper + lower, :2] for upper, lower in EYES] + [points[NOSE, :2]]
+    shift = np.mean([feature_shift(view, photo, f) for f in features], axis=0)
+    print(f"  features were {shift.round()} px off; moved the camera")
+    return FrontCamera(cam.rot, cam.scale, cam.centre - shift)
+
+
+def eye_paint(raster, cam, depth, texture, sprite, points):
+    """Where the portrait's eyes go in the texture: (texel index, portrait px, weight).
+    Each eye is matched to the model's own eye first, so the two line up."""
+    h, w = sprite.shape[:2]
+    view, idx, px, front = model_view(raster, cam, depth, texture, (w, h))
+    photo = cv2.cvtColor(sprite[..., :3], cv2.COLOR_BGR2GRAY)
     weight = np.zeros(len(idx), np.float32)
     source = np.zeros((len(idx), 2), np.float32)
     for upper, lower in EYES:
         eye = points[upper + lower, :2]
         width = np.ptp(eye[:, 0])
-        x0, y0 = (eye.min(0) - EYE_GROW * width).astype(int)
-        x1, y1 = (eye.max(0) + EYE_GROW * width).astype(int)
-        r = int(EYE_SEARCH * width)
-        score = cv2.matchTemplate(view[y0 - r:y1 + r, x0 - r:x1 + r].astype(np.float32),
-                                  photo[y0:y1, x0:x1].astype(np.float32), cv2.TM_CCOEFF_NORMED)
-        _, _, _, (bx, by) = cv2.minMaxLoc(score)
-        shift = np.array([bx - r, by - r], float)  # the model's eye = the portrait's + shift
+        shift = feature_shift(view, photo, eye)
         mask = np.zeros((h, w), np.uint8)
         cv2.fillConvexPoly(mask, cv2.convexHull(eye.astype(np.float32)).astype(np.int32), 255)
         grow = int(EYE_GROW * width)
@@ -202,8 +227,9 @@ def import_glb(glb: str, name: str):
 
     raster = Raster(vertices, mesh.faces, mesh.visual.uv)
     iou, cam = fit_camera(raster, sprite[..., 3])
-    depth = raster.depth(cam, (w, h))
     print(f"{name}: portrait outline overlap {iou:.3f}")
+    cam = align_features(raster, cam, texture.astype(np.float32), sprite, points)
+    depth = raster.depth(cam, (w, h))
 
     # Every vertex's spot in the portrait.
     photo_px, _ = cam.project(vertices)
