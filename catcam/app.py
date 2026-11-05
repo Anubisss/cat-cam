@@ -186,6 +186,8 @@ class FaceState:
         self.offsets = np.zeros((478, 3))  # in face widths
         self.face = None  # last seen face landmarks in px
         self.last_seen = None
+        # The last frame's head, offsets and blink before smoothing (for tools/tracking_eval.py).
+        self.measured = (self.head, self.offsets, self.blink)
 
     def reset_neutral(self):
         """Your next face and pose become the neutral ones."""
@@ -207,13 +209,16 @@ class FaceState:
             # past the camera) is "facing the viewer" for the cat from now on.
             self.neutral_pose, self.take_pose = pose, False
         reference = facing_camera(matrix) if self.neutral_pose is None else self.neutral_pose
-        self.head = self.rotation_filter(to_vector(relative_rotation(pose, reference)), dt)
+        head = to_vector(relative_rotation(pose, reference))
+        self.head = self.rotation_filter(head, dt)
         scores = {c.category_name: c.score for c in result.face_blendshapes[0]}
         self.ears = self.ear_motion.update(scores, dt, now)
         closed = blinks(scores, self.face, self.transfer.neutral)
         self.blink = self.blink + BLINK_SMOOTHING * (closed - self.blink)
         relaxed = max(scores[name] for name in EXPRESSIVE) < RELAXED_BELOW
-        self.offsets = self.expression_filter(EXPRESSION_GAIN * self.transfer(self.face, relaxed), dt)
+        offsets = EXPRESSION_GAIN * self.transfer(self.face, relaxed)
+        self.offsets = self.expression_filter(offsets, dt)
+        self.measured = (head, offsets, closed)
         self.idle.update(self.head, scores, talking, dt, now)
 
 
