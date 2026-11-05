@@ -5,8 +5,9 @@ is what lets the head take on the 2D cat's expressions.
 
     uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name> [--own-mouth]
 
---own-mouth keeps the head's own mouth: its lips part and its jaw moves, but no
-teeth, tongue or mouth cavity are added (see catcam.mouth3d).
+--own-mouth keeps the head's own mouth: no teeth, tongue or mouth cavity are
+added (see catcam.mouth3d). The import finds the head's own lower jaw instead and
+cuts it free along the slit between its lips, so it can swing open there.
 """
 
 import argparse
@@ -15,6 +16,9 @@ import cv2
 import moderngl
 import numpy as np
 from scipy.ndimage import distance_transform_edt
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components, dijkstra
+from scipy.spatial import cKDTree
 
 from catcam import cats
 from catcam.cat_face import EYES
@@ -33,6 +37,17 @@ SOLID = 250  # portrait alpha from which a pixel counts as the cat when matching
 # darker than SPECK_DARK (grey 0..255), SPECK_GAP darker than its surroundings (the
 # median over SPECK_WINDOW texels) and under SPECK_AREA texels, so dark fur stays.
 SPECK_DARK, SPECK_GAP, SPECK_WINDOW, SPECK_AREA = 15, 60, 41, 600
+# A head's own jaw (--own-mouth) grows over its surface from the lower lip and chin
+# (JAW_SEEDS), the rest of the face from the upper lip and nose (FACE_SEEDS), and it
+# is cut free where they meet. Going into a fold costs as much as JAW_FOLD face widths
+# of surface per radian it bends, so they meet in the slit between the lips. Bends
+# are measured on the surface smoothed over JAW_SMOOTH face widths, so fur and pores
+# don't count as folds, and the cut is smoothed as much.
+JAW_SEEDS = [17, 18, 83, 84, 152, 175, 199, 200, 313, 314]
+FACE_SEEDS = [0, 1, 2, 37, 39, 40, 98, 164, 185, 267, 269, 270, 327, 409]
+JAW_FOLD = 0.1
+JAW_SMOOTH = 0.01
+JAW_REACH = (0.3, 0.5)  # face widths from the lower lip: within the first it all moves, past the second none
 
 DEPTH_VS = """
 #version 330
@@ -272,6 +287,92 @@ def match_colours(raster, cam, depth, texture, sprite) -> np.ndarray:
     return np.clip(bgr * 255, 0, 255)
 
 
+def smoothstep(x: np.ndarray) -> np.ndarray:
+    x = np.clip(x, 0, 1)
+    return x * x * (3 - 2 * x)
+
+
+def find_jaw(vertices, faces, landmarks, face_model):
+    """The head's own lower jaw (see JAW_SEEDS), per vertex: how far it lies on the
+    jaw's side of the cut (surface, face widths; negative: the face's side) and how
+    much it would move with the jaw, 0..1. landmarks: the face's on the model;
+    face_model: a face width in model units."""
+    # Over the surface: vertices split along the texture's seams are one point.
+    points, weld = np.unique(vertices, axis=0, return_inverse=True)
+    weld = weld.ravel()
+    tri = weld[faces]
+    corners = points[tri]
+    area_normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    normals = np.zeros_like(points)
+    for corner in range(3):
+        np.add.at(normals, tri[:, corner], area_normals)
+    tree = cKDTree(points)
+    around = tree.query_ball_point(points, JAW_SMOOTH * face_model)
+    smooth = np.array([normals[near].sum(axis=0) for near in around])
+    smooth /= np.linalg.norm(smooth, axis=1, keepdims=True) + 1e-12
+    edges = np.concatenate([tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]])
+    a, b = np.unique(np.sort(edges, axis=1), axis=0).T
+    bend = np.arccos(np.clip((smooth[a] * smooth[b]).sum(axis=1), -1, 1))
+    # A valley, not a ridge: the normals turn toward each other.
+    fold = ((points[b] - points[a]) * (smooth[a] - smooth[b])).sum(axis=1) < 0
+    cost = np.linalg.norm(points[a] - points[b], axis=1) + JAW_FOLD * face_model * bend * fold
+    n = len(points)
+    ends = (np.concatenate([a, b]), np.concatenate([b, a]))
+    graph = coo_matrix((np.tile(cost, 2), ends), shape=(n, n)).tocsr()
+    jaw_seeds = np.unique(tree.query(landmarks[JAW_SEEDS])[1])
+    to_jaw = dijkstra(graph, indices=jaw_seeds, min_only=True)
+    to_face = dijkstra(graph, indices=np.unique(tree.query(landmarks[FACE_SEEDS])[1]), min_only=True)
+    margin = (to_face - to_jaw) / face_model
+    margin = np.array([margin[near].mean() for near in around])  # a smooth line to cut along
+    # Only the jaw's own patch: not specks of skin it happens to reach first elsewhere.
+    patch = margin > 0
+    _, label = connected_components(graph[patch][:, patch], directed=False)
+    labels = np.full(n, -1)
+    labels[patch] = label
+    stray = patch & ~np.isin(labels, labels[jaw_seeds])
+    margin[stray] = -margin[stray]
+    near, far = JAW_REACH
+    reach = np.linalg.norm(points - landmarks[[14, 17]].mean(axis=0), axis=1) / face_model
+    return margin[weld], (1 - smoothstep((reach - near) / (far - near)))[weld]
+
+
+def cut_jaw(attributes: dict, faces, margin, reach):
+    """Cuts the jaw free along the line where margin is 0 (see find_jaw), so it opens
+    without stretching skin: the faces across that line are split along it, and its
+    points are made twice, once for each side. attributes: per-vertex arrays, carried
+    over onto the new points; returns them, the faces and each vertex's jaw weight
+    (reach on the jaw's side, 0 on the face's)."""
+    n = len(margin)
+    on_jaw = margin > 0
+    sides = on_jaw[faces]
+    across = sides.any(axis=1) & ~sides.all(axis=1)
+    cut, kept = faces[across], faces[~across]
+    # Turn each face so its first corner is the one alone on its side (winding kept).
+    alone = np.where(sides[across].sum(axis=1) == 1, np.argmax(sides[across], axis=1),
+                     np.argmin(sides[across], axis=1))
+    cut = np.take_along_axis(cut, (alone[:, None] + np.arange(3)) % 3, axis=1)
+    # Where the line crosses the edges from that corner; neighbouring faces share them.
+    edges, slot = np.unique(np.sort(np.concatenate([cut[:, [0, 1]], cut[:, [0, 2]]]), axis=1),
+                            axis=0, return_inverse=True)
+    m = len(edges)
+    a, b = edges.T
+    t = margin[a] / (margin[a] - margin[b])
+    out = {}
+    for name, values in attributes.items():
+        on_line = values[a] + t.reshape(-1, *[1] * (values.ndim - 1)) * (values[b] - values[a])
+        out[name] = np.concatenate([values, on_line, on_line])  # the face's copy, then the jaw's
+    jaw = np.concatenate([np.where(on_jaw, reach, 0), np.zeros(m), reach[a] + t * (reach[b] - reach[a])])
+    first, second = slot.ravel()[:len(cut)], slot.ravel()[len(cut):]
+    own = m * on_jaw[cut[:, 0]]  # the lone corner's side
+    other = m - own
+    faces = np.concatenate([
+        kept,
+        np.column_stack([cut[:, 0], n + first + own, n + second + own]),
+        np.column_stack([n + first + other, cut[:, 1], cut[:, 2]]),
+        np.column_stack([n + first + other, cut[:, 2], n + second + other])])
+    return out, faces, jaw.astype(np.float32)
+
+
 def import_glb(glb: str, name: str, own_mouth: bool = False):
     import trimesh  # only needed here
 
@@ -295,6 +396,14 @@ def import_glb(glb: str, name: str, own_mouth: bool = False):
     lx = np.clip(points[:, 0].round().astype(int), 0, w - 1)
     ly = np.clip(points[:, 1].round().astype(int), 0, h - 1)
     landmarks = cam.unproject(points[:, :2], depth[ly, lx])
+    faces, normals, uv, jaw = mesh.faces, mesh.vertex_normals, mesh.visual.uv, np.zeros(0, np.float32)
+    if own_mouth:
+        margin, reach = find_jaw(vertices, faces, landmarks, np.ptp(points[:, 0]) / cam.scale)
+        parts, faces, jaw = cut_jaw(
+            {"vertices": vertices, "normals": normals, "uv": uv, "photo_px": photo_px}, faces, margin, reach)
+        vertices, normals, uv, photo_px = (parts[k] for k in ("vertices", "normals", "uv", "photo_px"))
+        normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+        print(f"  {np.count_nonzero(jaw > 0.5)} vertices move with the jaw")
 
     eye_index, eye_px, eye_weight = eye_paint(raster, cam, depth, texture.astype(np.float32), sprite, points)
     flat = texture.reshape(-1, 3).astype(np.float32)
@@ -304,12 +413,12 @@ def import_glb(glb: str, name: str, own_mouth: bool = False):
 
     mesh_file, texture_file = files(name)
     np.savez_compressed(
-        mesh_file, vertices=vertices.astype("f4"), normals=mesh.vertex_normals.astype("f4"),
-        uv=mesh.visual.uv.astype("f4"), faces=mesh.faces.astype("i4"),
+        mesh_file, vertices=vertices.astype("f4"), normals=normals.astype("f4"),
+        uv=uv.astype("f4"), faces=faces.astype("i4"),
         photo_px=photo_px.astype("f4"), landmarks=landmarks.astype("f4"),
         cam_rot=cam.rot.astype("f4"), cam_scale=np.float32(cam.scale),
         eye_index=eye_index, eye_px=eye_px.astype("f4"), eye_weight=eye_weight.astype("f4"),
-        own_mouth=own_mouth)
+        own_mouth=own_mouth, jaw_weight=jaw)
     cv2.imwrite(str(texture_file), texture)
     print(f"  {len(vertices)} vertices, {len(eye_index)} eye texels -> {mesh_file.parent}")
 

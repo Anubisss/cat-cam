@@ -210,6 +210,7 @@ These constants sit at the top of their files:
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
 | `LENGTH`, `SWISH`, `DRAG`, `SWITCH_FRAMES` | `catcam/tail.py` | how long the tail is, how much it sways by itself, how quickly it calms down, and how long a change between one and two hands must last before the tail follows |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
+| `JAW_HINGE`, `OWN_JAW_MAX` | `catcam/head3d.py` | where a 3D head's own jaw swings from, and how far it opens |
 | `STILL_AFTER`, `BREATHING`, `SWAY`, `LOOK` | `catcam/idle.py` | how long you must be still before he acts on his own, his breathing, his sway, and how far he looks around |
 | `ABOVE_NOISE`, `MIN_GAP`, `PITCH_FOLLOW` | `catcam/voice.py` | how loud you must talk to bark, the shortest time between barks, and how much the bark's pitch follows yours |
 
@@ -233,10 +234,16 @@ These constants sit at the top of their files:
    a chain of points whose tip is pulled toward your hand; the rest is
    simulated with momentum, even bending and a bend limit, and wrapped in the
    skin of the cat's paw photo.
-6. While you are still and quiet, `catcam/idle.py` adds breathing, a sway and
+6. A 3D head (`catcam/head3d.py`) is tied to the photo cat's face points, so
+   it takes on the same expressions. One with its own mouth, like Woofgang's,
+   has its lower jaw found and cut free when it is imported: it grows over the
+   model from the lower lip, the upper face from the upper lip, and they meet
+   in the slit between the lips (`catcam/head3d_import.py`). The jaw then swings
+   about its hinge as far as your lower lip drops.
+7. While you are still and quiet, `catcam/idle.py` adds breathing, a sway and
    glances to the head. A background picture or video goes wherever the
    animal isn't (`catcam/background.py`).
-7. The frame goes to the OBS virtual camera through pyvirtualcam. Your
+8. The frame goes to the OBS virtual camera through pyvirtualcam. Your
    microphone goes through `catcam/voice.py`, which finds the syllables in
    your loudness and plays a bark for each, out to the BlackHole virtual
    microphone.

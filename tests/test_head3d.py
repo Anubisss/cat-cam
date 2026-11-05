@@ -83,3 +83,24 @@ def test_vertices_follow_the_landmarks(box, woofgang):
     assert np.allclose(moved[:, 1], -50.0 / scale * weight, atol=1e-6)
     assert np.allclose(moved[:, [0, 2]], 0, atol=1e-6)
     assert weight.max() > 0.5
+
+
+def test_own_jaw_opens_between_the_lips(woofgang):
+    """Woofgang keeps his own mouth: opening it swings his jaw down and shows his dark
+    inside between the lips, while everything above them stays put."""
+    renderer = Renderer(OUT)
+    flat = CatMesh(renderer, woofgang.sprite, woofgang.points, BG)
+    head = head3d.Head3D(renderer, "Woofgang", flat, woofgang.sprite, woofgang.points, BG)
+    assert head.own_mouth and head.jaw_weight is not None
+    still = np.zeros((478, 3))
+    drop = still.copy()
+    drop[[head3d.LIP_MIDDLE[1], *head3d.LOWER_INNER_LIP], 1] = 0.1 * np.ptp(woofgang.points[:, 0])
+    closed = head.render(woofgang.sprite, still, np.eye(3)).copy()
+    opened = head.render(woofgang.sprite, drop, np.eye(3))
+
+    def inside(frame):  # his dark, reddish inside
+        return np.count_nonzero((frame.max(axis=2) < 50) & (frame[..., 2] > frame[..., 0]))
+
+    assert inside(opened) > inside(closed) + 0.002 * OUT[0] * OUT[1]
+    top = OUT[1] // 2  # eyes and nose
+    assert np.array_equal(opened[:top], closed[:top])

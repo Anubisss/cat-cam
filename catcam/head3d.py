@@ -34,7 +34,6 @@ FALLOFF = 0.25  # wide, so the whole lower jaw and chin move together instead of
 # Near the mouth, vertices only follow landmarks on their own side of the lips, so the
 # lips part instead of stretching: this far past the mouth corners and above/below the lip line.
 MOUTH_ZONE = (0.06, 0.15)
-LIP_EDGE = 0.03  # face widths: skin this close to the line between the lips is the lips' inner edge
 # Face widths: only skin this close to a face landmark (in 3D) counts as the lips; the back
 # of the head lines up with the mouth in the portrait too.
 ON_FACE = 0.1
@@ -45,6 +44,11 @@ MOUTH_CORNERS = (UPPER_INNER_LIP[0], UPPER_INNER_LIP[-1])
 LIP_MIDDLE = (13, 14)  # where the upper and lower inner lips meet in the middle
 JAW_MAX = 1.0  # radians, the most the jaw tilts; beyond that it just drops with the lip
 BREATH_RISE = 0.008  # head heights a full breath lifts the head by
+# A head with its own jaw (see catcam.head3d_import) opens it about a hinge this
+# far from the middle of its lips (mouth widths: right, up, out of the mouth), at
+# most OWN_JAW_MAX radians.
+JAW_HINGE = (0.0, 0.1, -1.35)
+OWN_JAW_MAX = 0.5
 OWN_MOUTH_INSIDE = (0.16, 0.06, 0.06)  # RGB of a head's own inside, seen between its parted lips
 
 VERTEX_SHADER = """
@@ -58,15 +62,12 @@ uniform vec2 shade_range;
 in vec3 in_pos;
 in vec3 in_normal;
 in vec2 in_uv;
-in float in_lip;
 out vec2 uv;
 out float shade;
 out vec3 normal;
-out float lip;
 void main() {
     gl_Position = proj * vec4(rot * in_pos + shift, 1.0);
     uv = in_uv;
-    lip = in_lip;
     normal = rot * in_normal;
     // The texture already has the light of the photo it came from baked in; only the
     // change in facing since then brightens or darkens it (see catcam.lighting).
@@ -97,17 +98,15 @@ uniform vec3 inside;     // ...in this colour (BGR)
 in vec2 uv;
 in float shade;
 in vec3 normal;
-in float lip;  // 1 on the lips' inner edge, which stretches into the gap as they part
 out vec4 color;
 """ + IN_OPENING + """
 void main() {
-    bool open = in_opening(gl_FragCoord.xy);
-    if (seam && open) discard;
-    if (own_mouth && open && (!gl_FrontFacing || lip > 0.5)) {
+    if (own_mouth && !gl_FrontFacing) {
         // Darker where the inside turns away from the camera, so it reads as a hollow.
         color = vec4(inside * (0.35 + 0.65 * abs(normalize(normal).z)), 1.0);
         return;
     }
+    if (seam && in_opening(gl_FragCoord.xy)) discard;
     color = vec4(texture(tex, uv).rgb * shade, 1.0);
 }
 """
@@ -202,17 +201,22 @@ def lip_sides(photo_px, points, face_width):
     return near_mouth, y > line_y(x), inside, below
 
 
-def follow_weights(vertices, photo_px, landmarks, points, face_model, face_width) -> csr_matrix:
+def follow_weights(vertices, photo_px, landmarks, points, face_model, face_width,
+                   on_jaw=None) -> csr_matrix:
     """(vertices, landmarks) weights: how each vertex moves with the face landmarks.
     Closeness is measured on the model (landmarks: their spots on it; face_model: a
     face width in model units), so the back of the head stays put; which side of the
-    lips a vertex is on is decided in the portrait (photo_px, points, face_width px)."""
+    lips a vertex is on is decided in the portrait (photo_px, points, face_width px),
+    or for a head with its own jaw by whether it is on the jaw (on_jaw)."""
     tree = cKDTree(landmarks)
     dist, nearest = tree.query(vertices, k=NEAREST)
     weights = np.exp(-((dist / (FOLLOW * face_model)) ** 2))
     # Lips: keep each vertex to the landmarks on its side of the line between them.
     near_mouth, vertex_below, _, below = lip_sides(photo_px, points, face_width)
-    weights[near_mouth[:, None] & (below[nearest] != vertex_below[:, None])] = 0
+    if on_jaw is None:
+        weights[near_mouth[:, None] & (below[nearest] != vertex_below[:, None])] = 0
+    else:  # below the lips only the jaw moves, about its hinge; the skin around it goes along with it
+        weights[below[nearest] != on_jaw[:, None]] = 0
     total = weights.sum(axis=1, keepdims=True)
     weights = np.where(total > 0, weights / np.maximum(total, 1e-12), 0)
     falloff = np.exp(-((dist[:, 0] / (FALLOFF * face_model)) ** 2))
@@ -261,8 +265,11 @@ class Head3D:
         # A movement in portrait px (x right, y down, z away) as a movement of the model.
         self.to_model = (mesh["cam_rot"].T @ np.diag([1, -1, -1]) / mesh["cam_scale"]).astype(np.float64)
         face_width = np.ptp(points[:, 0])
+        jaw = mesh["jaw_weight"] if "jaw_weight" in mesh.files else np.zeros(0)
+        self.jaw_weight = jaw.astype(np.float64)[:, None] if len(jaw) else None
         self.follow = follow_weights(self.rest, self.photo_px, self.landmarks, points,
-                                     face_width / float(mesh["cam_scale"]), face_width)
+                                     face_width / float(mesh["cam_scale"]), face_width,
+                                     None if self.jaw_weight is None else jaw > 0.5)
         outline = _outline(sprite[..., 3])
         self.ears = find_ears(np.vstack([points[:, :2], self.photo_px]), outline, len(points), face_width)
         self.face_count = len(points)
@@ -292,14 +299,13 @@ class Head3D:
         self.vbo = ctx.buffer(self.rest.astype("f4").tobytes(), dynamic=True)
         face_model = face_width / float(mesh["cam_scale"])
         on_face = cKDTree(self.landmarks).query(self.rest)[0] < ON_FACE * face_model
-        _, _, inside_mouth, _ = lip_sides(self.photo_px, points, face_width)
-        seam_y = lip_line(points)(self.photo_px[:, 0])
-        lip_edge = inside_mouth & on_face & (np.abs(self.photo_px[:, 1] - seam_y) < LIP_EDGE * face_width)
         attributes = [(self.vbo, "3f", "in_pos"),
                       (ctx.buffer(mesh["normals"].astype("f4").tobytes()), "3f", "in_normal"),
-                      (ctx.buffer(mesh["uv"].astype("f4").tobytes()), "2f", "in_uv"),
-                      (ctx.buffer(lip_edge.astype("f4").tobytes()), "1f", "in_lip")]
-        seam = lip_seam(mesh["faces"], self.photo_px, points, face_width, on_face)
+                      (ctx.buffer(mesh["uv"].astype("f4").tobytes()), "2f", "in_uv")]
+        if self.jaw_weight is None:
+            seam = lip_seam(mesh["faces"], self.photo_px, points, face_width, on_face)
+        else:  # the jaw is cut free already (see catcam.head3d_import.cut_jaw)
+            seam = np.zeros(len(mesh["faces"]), bool)
         self.vao, self.seam_vao = (
             ctx.vertex_array(self.prog, attributes, ctx.buffer(mesh["faces"][part].astype("i4").tobytes()))
             if part.any() else None for part in (~seam, seam))
@@ -358,12 +364,29 @@ class Head3D:
         self._uploaded = sprite
 
     def _shape(self, landmark_moves: np.ndarray, ears) -> np.ndarray:
-        """Rest vertices moved by the landmarks' movement (portrait px) and the ear angles."""
+        """Rest vertices moved by the landmarks' movement (portrait px) and the ear
+        angles, and swung open with the jaw if it is marked."""
         moves = self.follow @ landmark_moves
         if any(ears):
             here = np.vstack([np.zeros((self.face_count, 2)), self.photo_px + moves[:, :2]])
             moves[:, :2] += (bend(here, self.ears, ears) - here)[self.face_count:]
-        return self.rest + moves @ self.to_model.T
+        shaped = self.rest + moves @ self.to_model.T
+        if self.jaw_weight is None:
+            return shaped
+        swung = self._swing(self.rest, landmark_moves)
+        return shaped + self.jaw_weight * (swung - shaped)
+
+    def _swing(self, points: np.ndarray, landmark_moves: np.ndarray) -> np.ndarray:
+        """points (model, at rest) where the jaw puts them: turned about its hinge
+        as far as your lower lip has dropped, and moved with the upper lip."""
+        moved = landmark_moves[list(LIP_MIDDLE)] @ self.to_model.T
+        drop = (moved[1] - moved[0]) @ self.mouth_axes[:, 1]  # the lower lip's, down is negative
+        hinge = np.array(JAW_HINGE) * self.mouth_width
+        angle = min(np.arcsin(np.clip(-drop / np.linalg.norm(hinge[1:]), 0, 1)), OWN_JAW_MAX)
+        c, s = np.cos(angle), np.sin(angle)
+        turn = self.mouth_axes @ np.array([[1, 0, 0], [0, c, -s], [0, s, c]]) @ self.mouth_axes.T
+        pivot = self.mouth_origin + self.mouth_axes @ hinge
+        return (points - pivot) @ turn.T + pivot + moved[0]
 
     def _mouth_matrices(self, landmark_moves: np.ndarray):
         """Mouth frame -> model, for the parts moving with the upper lip and with the jaw."""
@@ -388,6 +411,8 @@ class Head3D:
         return skull, jaw
 
     def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray):
+        if self.own_mouth:  # nothing to add: its own inside shows
+            return
         # The gap between the lips on screen: upper lip left to right, lower lip back.
         ring = UPPER_INNER_LIP + LOWER_INNER_LIP[::-1]
         lips = self.landmarks[ring] + self.lips_meet + landmark_moves[ring] @ self.to_model.T
@@ -396,8 +421,6 @@ class Head3D:
         screen = (ndc + 1) / 2 * (self.out_w, self.out_h)  # gl_FragCoord: px from the bottom left
         opening = [tuple(p) for p in screen]
         self.prog["opening"].value = opening
-        if self.own_mouth:
-            return
         skull, jaw = self._mouth_matrices(landmark_moves)
         self.mouth_prog["opening"].value = opening
         self.mouth_prog["rot"].write(model_rot.astype("f4").T.tobytes())

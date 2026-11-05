@@ -43,7 +43,7 @@ makes more detailed heads, and the same import takes them; see
 We use [trellis-mac](https://github.com/shivampkumar/trellis-mac), a port
 of TRELLIS.2 to Apple's Metal. Out of the box it doesn't build with today's
 Xcode and torch, and its textures come out with flaws. `tools/trellis/`
-holds the exact versions and fixes the heads were made with.
+has the exact versions and fixes the heads were made with.
 
 1. Get trellis-mac and its parts at the tested versions, with the fixes
    applied. Run this from the Cat Cam folder; it is safe to run again:
@@ -153,8 +153,9 @@ Woofgang's head was made with Meshy's Image to 3D instead of TRELLIS:
    small.export(sys.argv[2])
    PY
    ```
-3. **Import** it as above. Add `--own-mouth` to keep the head's own mouth
-   instead of the added one (see below):
+3. **Import** it as above. Meshy's heads come with a real mouth, closed, with
+   a slit between the lips. Add `--own-mouth` to keep it instead of adding
+   one (see below):
 
    ```sh
    uv run --with trimesh python -m catcam.head3d_import <small.glb> <Name> --own-mouth
@@ -188,9 +189,27 @@ the constants at the top of `mouth3d.py`, in mouth widths: tooth sizes and
 positions, the tongue, the hinge, and the colours.
 
 **Its own mouth instead** (`--own-mouth`): no teeth, tongue or cavity are
-added. The lips still split along the mouth line and the jaw still drops
-with yours, and the head's own inside shows between them as a dark hollow.
-Woofgang's is like that.
+added. The import finds the head's own lower jaw on the model and cuts it
+free, and the app swings it open with your mouth. Woofgang's is like that:
+- **Finding the jaw:** the jaw spreads over the model's surface from its lower
+  lip and chin, the rest of the face from its upper lip and nose, and the jaw
+  ends where the two meet. Going into a fold (a valley in the surface) costs
+  extra, so they meet in the deepest fold between them: the slit between the
+  lips, which runs on along the sides of the jaw under a dog's hanging lips.
+  Bumps of fur and pores don't count as folds. The jaw also takes in the skin
+  under the chin, less and less of it further from the lips.
+- **Cutting it free:** the faces across that line are split along it, and
+  every point on it is made twice, once for each side. Nothing stretches
+  between the lips as they part; the head's dark inside shows instead.
+- **Opening it:** the jaw swings about a hinge behind the mouth corners, where
+  a dog's jaw joint is (`JAW_HINGE` in `catcam/head3d.py`), as far as your
+  lower lip drops, up to `OWN_JAW_MAX`.
+
+The import prints how many vertices move with the jaw. If the jaw takes a
+piece of the upper lip, or leaves part of the lower lip behind, the knobs are
+at the top of `catcam/head3d_import.py`: `JAW_SEEDS` and `FACE_SEEDS` (the
+face points each side starts from), `JAW_FOLD` (how strongly folds divide
+them) and `JAW_REACH` (how far down the throat the jaw's pull fades out).
 
 **The mouth line** is where the lips meet in the portrait, found when the cat
 is prepared. The fit is made for cats; on other faces it can land elsewhere.
