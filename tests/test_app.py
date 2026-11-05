@@ -221,7 +221,7 @@ def test_tail_replaces_one_paw_only_while_on(real_cats):
     from catcam.paws import Paws
     from catcam.tail import Tail
 
-    cat = next(c for c in load_cats(Renderer((1280, 720))) if c.name == "Dori")
+    cat = next(c for c in load_cats(Renderer((1280, 720))) if c.name == "Woofgang")
     paws = Paws(1280)
     paws.slots = {"Right": {"presence": 1.0, "params": np.array([1100, 500, 200, 0, -1, -1, 0])}}
     tail = Tail((1280, 720))

@@ -16,7 +16,7 @@ def test_blink_only_touches_the_eyes(real_cats):
         changed = np.argwhere((closed != cat.sprite).any(axis=2))
         assert len(changed), cat.name
         # Measured on the eyes as snapped onto the photo: the raw landmarks can
-        # squash a narrowed eye into a slit (Milan).
+        # squash a narrowed eye into a slit.
         eyes = np.vstack([contour for pair in face.eyes for contour in pair])
         height = np.ptp(eyes[:, 1])
         assert changed[:, 0].min() > eyes[:, 1].min() - 4 * height, cat.name

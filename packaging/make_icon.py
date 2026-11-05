@@ -67,7 +67,7 @@ def icon(name: str) -> np.ndarray:
 def main():
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
-    image = icon(sys.argv[2] if len(sys.argv) > 2 else "TMarci")
+    image = icon(sys.argv[2] if len(sys.argv) > 2 else "Woofgang")
     for size in ICON_SIZES:
         for factor, suffix in ((1, ""), (2, "@2x")):
             px = size * factor

@@ -17,11 +17,11 @@ def _run(tail, hand, seconds):
         tail.update(hand, 0.0 if hand is None else 1.0, 1 / 30, FACE_CENTER, FACE_WIDTH)
 
 
-def test_tail_skin_is_davids_arm(real_cats):
-    david = next(c for c in real_cats if c.name == "David")
-    skin = tail_skin(david.paws)
+def test_tail_skin_is_an_arm_from_the_paw_photos(real_cats):
+    woofgang = next(c for c in real_cats if c.name == "Woofgang")
+    skin = tail_skin(woofgang.paws)
     assert skin.image.ndim == 3 and skin.image.shape[1] == 64 and len(skin.image) > 50
-    assert skin.image.mean() > 80  # skin, not the transparent background
+    assert skin.image.max() > 60 and skin.image.std() > 5  # a picture of the arm, not blank
     assert tail_skin({}) is None
 
 

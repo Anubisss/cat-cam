@@ -1,11 +1,11 @@
 # Cat Cam
 
-Be a cat in your Zoom calls. Pick one of eight cats; it turns, nods and tilts
+Be Woofgang, a golden retriever, in your Zoom calls. He turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile, open
-mouth with fangs) and your hands become its paws: the top of the paw when
-you show the back of your hand, the soft toe beans when you show your palm. Its ears perk up when you raise
-your brows, flatten when you frown, and twitch now and then, and the side of
-its head that turns away from the light falls into shadow.
+mouth) and your hands become his paws: the top of the paw when you show the
+back of your hand, the toe beans when you show your palm. Tick **3D head** and
+he becomes a real 3D head whose jaw drops when you open your mouth, and the
+side of his head that turns away from the light falls into shadow.
 
 Your own face is never sent anywhere. Only the drawn cat goes out to the
 virtual camera, and everything runs locally on your computer.
@@ -106,7 +106,7 @@ head that turns properly, with teeth and a tongue when the mouth opens.
 
 | Key        | What it does                                              |
 |------------|-----------------------------------------------------------|
-| `1` to `8` | switch cat, at any time                                   |
+| `1`, `2`, ... | switch cat, when there are several                     |
 | `c`        | open the cat picker (the call keeps showing your cat)     |
 | `Esc`      | close the picker                                          |
 | `t`        | tail on/off (same as the Tail checkbox)                   |

@@ -159,8 +159,6 @@ def test_fangs_reach_below_the_front_teeth(meshes):
 
 
 def test_mouth_takes_on_the_lip_colour(meshes):
-    for _, mesh in meshes:
+    for cat, mesh in meshes:
         assert mesh.lip_tint.shape == (3,) and abs(mesh.lip_tint.mean() - 1) < 1e-6
-    reddest = max(meshes, key=lambda cm: cm[1].lip_tint[0])[1]
-    palest = min(meshes, key=lambda cm: cm[1].lip_tint[0])[1]
-    assert reddest.lip_tint[0] > palest.lip_tint[0] + 0.1  # the cats' lips really differ
+        assert np.ptp(mesh.lip_tint) > 0.1, cat.name  # a real colour, not neutral grey

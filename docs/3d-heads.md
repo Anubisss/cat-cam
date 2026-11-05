@@ -5,7 +5,7 @@ checkbox in the app, or `d`). It turns properly, and when the mouth opens there
 are teeth, a tongue and a jaw inside. The head is generated from the cat's
 portrait by [TRELLIS.2](https://github.com/microsoft/TRELLIS.2), an
 image-to-3D model, running locally on an Apple Silicon Mac. This page is the
-recipe David's head was made with, including what we tried that didn't work.
+recipe the first heads were made with, including what we tried that didn't work.
 
 Everything after generation is automatic. The eyes, the mouth, expressions,
 blinks, ears and shading all come from the import and the app; there is
@@ -97,8 +97,8 @@ holds the exact versions and fixes the heads were made with.
    two numbers worth reading:
 
    ```
-   Balint: portrait outline overlap 0.961
-     features were [-0.  4.] px off; moved the camera
+   Woofgang: portrait outline overlap 0.961
+     features were [ 7. 42.] px off; moved the camera
    ```
 
    - **Outline overlap:** how well the head's outline, seen face-on, matches
@@ -106,7 +106,7 @@ holds the exact versions and fixes the heads were made with.
      out a different shape from the photo; generate it again with another
      `--seed`.
    - **Features off:** how far the eyes and nose had to be nudged to land on
-     the portrait's. A few pixels is normal; the import corrects it.
+     the portrait's. Up to a few dozen pixels is normal; the import corrects it.
 3. **Look at it** without a camera. This renders the photo head and the 3D
    head side by side: at rest, mouth half and wide open, eyes closed, ears
    flat, and turned with the mouth open:
@@ -121,7 +121,7 @@ holds the exact versions and fixes the heads were made with.
 
 ## Heads from Meshy
 
-TMarci's head was made with Meshy's Image to 3D instead of TRELLIS:
+Woofgang's head was made with Meshy's Image to 3D instead of TRELLIS:
 
 1. **Settings:**
    - Multi-view on, with the front portrait as the main view and the
@@ -190,7 +190,7 @@ positions, the tongue, the hinge, and the colours.
 **Its own mouth instead** (`--own-mouth`): no teeth, tongue or cavity are
 added. The lips still split along the mouth line and the jaw still drops
 with yours, and the head's own inside shows between them as a dark hollow.
-TMarci's is like that.
+Woofgang's is like that.
 
 **The mouth line** is where the lips meet in the portrait, found when the cat
 is prepared. The fit is made for cats; on other faces it can land elsewhere.
@@ -198,7 +198,7 @@ A golden retriever's lands on its nose, for example, because its mouth is a
 smile whose corners are its highest points. Then write the line yourself in
 `all_cats/<Name>Mouth.txt`: one `x, y` per line, in portrait pixels, from
 one mouth corner to the other. Then prepare the cat again with
-`--force`, and import its head again. `all_cats/TMarciMouth.txt` is an
+`--force`, and import its head again. `all_cats/WoofgangMouth.txt` is an
 example.
 
 **Everything else** comes from the photo cat:

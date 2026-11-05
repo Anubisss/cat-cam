@@ -2,7 +2,7 @@
 (rest, mouth half and wide open, eyes closed, ears flat, turned with the mouth
 open), one row per head, so a new 3D head can be looked over without a camera.
 
-    uv run python tools/head3d_sheet.py Balint [more cats...] -o sheet.jpg
+    uv run python tools/head3d_sheet.py Woofgang [more cats...] -o sheet.jpg
 """
 
 import argparse

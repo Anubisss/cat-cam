@@ -36,49 +36,49 @@ def _box_head(folder, name, points, depth=0.02):
 
 
 @pytest.fixture(scope="module")
-def david():
-    return cats.load("David")
+def woofgang():
+    return cats.load("Woofgang")
 
 
 @pytest.fixture
-def box(tmp_path, monkeypatch, david):
+def box(tmp_path, monkeypatch, woofgang):
     monkeypatch.setattr(head3d, "ASSETS", tmp_path)
-    _box_head(tmp_path, "Box", david.points)
+    _box_head(tmp_path, "Box", woofgang.points)
     renderer = Renderer(OUT)
-    flat = CatMesh(renderer, david.sprite, david.points, BG)
-    return head3d.Head3D(renderer, "Box", flat, david.sprite, david.points, BG)
+    flat = CatMesh(renderer, woofgang.sprite, woofgang.points, BG)
+    return head3d.Head3D(renderer, "Box", flat, woofgang.sprite, woofgang.points, BG)
 
 
-def test_has_head(tmp_path, monkeypatch, david):
+def test_has_head(tmp_path, monkeypatch, woofgang):
     monkeypatch.setattr(head3d, "ASSETS", tmp_path)
     assert not head3d.has_head("Box")
-    _box_head(tmp_path, "Box", david.points)
+    _box_head(tmp_path, "Box", woofgang.points)
     assert head3d.has_head("Box")
 
 
-def test_framed_like_the_photo_cats(box, david):
-    frame = box.render(david.sprite, np.zeros((478, 3)), np.eye(3))
+def test_framed_like_the_photo_cats(box, woofgang):
+    frame = box.render(woofgang.sprite, np.zeros((478, 3)), np.eye(3))
     rows = np.nonzero((frame != BG).any(axis=(1, 2)))[0]
     assert rows[0] == pytest.approx(TOP_MARGIN * OUT[1], abs=3)
     assert rows[-1] == pytest.approx(CHIN_LINE * OUT[1], abs=3)
 
 
-def test_front_faces_camera_in_bgr_and_turns(box, david):
+def test_front_faces_camera_in_bgr_and_turns(box, woofgang):
     left = OUT[1] // 3, OUT[0] // 3  # off the drawn mouth
-    rest = box.render(david.sprite, np.zeros((478, 3)), np.eye(3))
+    rest = box.render(woofgang.sprite, np.zeros((478, 3)), np.eye(3))
     b, g, r = rest[left].astype(int)
     assert r > 200 and g < 60  # red front, BGR like the rest of the app
-    turned = box.render(david.sprite, np.zeros((478, 3)), to_matrix(np.array([0.0, np.pi / 2, 0.0])))
+    turned = box.render(woofgang.sprite, np.zeros((478, 3)), to_matrix(np.array([0.0, np.pi / 2, 0.0])))
     b, g, r = turned[OUT[1] // 3, OUT[0] // 2].astype(int)
     assert g > 2 * r and g > 2 * b  # side on: the (shaded) green side
 
 
-def test_vertices_follow_the_landmarks(box, david):
+def test_vertices_follow_the_landmarks(box, woofgang):
     moves = np.zeros((478, 3))
     moves[:, 1] = 50.0  # every landmark 50 px down the portrait
     moved = box._shape(moves, (0.0, 0.0)) - box.rest
     weight = np.asarray(box.follow.sum(axis=1)).ravel()
-    scale = np.ptp(david.points[:, :2], axis=0).max()
+    scale = np.ptp(woofgang.points[:, :2], axis=0).max()
     # Down the portrait is down the model, at the portrait's scale, as much as each vertex follows.
     assert np.allclose(moved[:, 1], -50.0 / scale * weight, atol=1e-6)
     assert np.allclose(moved[:, [0, 2]], 0, atol=1e-6)
