@@ -31,6 +31,7 @@ TRACE = (0.3, 0.08)  # tracing: half the width and height of the area searched
 FOLLOW = (0.03, 0.06)  # the face follows the lips: blending radius, falloff
 PLACE_FADE = 0.1  # a hand-placed mouth line's pull fades out this far past its corners
 NOSE_BOTTOM, CHIN = 2, 152  # landmarks: the stretch to a hand-placed line ends at these
+EYE_CORNERS = (33, 263)  # outer eye corners: a lower face fitted too low is lifted from their height
 
 
 def _creases(sprite: np.ndarray, face_width: float) -> np.ndarray:
@@ -112,6 +113,7 @@ def place_mouth(landmarks: np.ndarray, line: np.ndarray, face_width: float) -> n
     the lips: what moves with your lower lip stays below the new line."""
     line = line[np.argsort(line[:, 0])]
     lips = UPPER_INNER_LIP + LOWER_INNER_LIP
+    landmarks = _lift_lower_face(landmarks, line)
     old = (landmarks[UPPER_INNER_LIP, :2] + landmarks[LOWER_INNER_LIP, :2]) / 2
     old = old[np.argsort(old[:, 0])]
     top, bottom = landmarks[NOSE_BOTTOM, 1], landmarks[CHIN, 1]
@@ -129,6 +131,21 @@ def place_mouth(landmarks: np.ndarray, line: np.ndarray, face_width: float) -> n
     seam_x = np.linspace(line[0, 0], line[-1, 0], len(UPPER_INNER_LIP))
     seam = np.column_stack([seam_x, np.interp(seam_x, line[:, 0], line[:, 1])])
     out[lips, :2] = np.vstack([seam, seam])
+    return out
+
+
+def _lift_lower_face(landmarks: np.ndarray, line: np.ndarray) -> np.ndarray:
+    """landmarks with the face below the eyes squeezed up, if the fit put it so low
+    that the nose sits below the hand-placed lips (line): the fitted mouth moves
+    onto the line, everything between the eyes and the chin in proportion."""
+    target = np.interp(np.median(line[:, 0]), line[:, 0], line[:, 1])
+    if target > landmarks[NOSE_BOTTOM, 1]:
+        return landmarks
+    eyes, chin = landmarks[list(EYE_CORNERS), 1].mean(), landmarks[CHIN, 1]
+    mouth = landmarks[list(UPPER_INNER_LIP + LOWER_INNER_LIP), 1].mean()
+    out = landmarks.copy()
+    between = (landmarks[:, 1] > eyes) & (landmarks[:, 1] < chin)
+    out[between, 1] = np.interp(landmarks[between, 1], [eyes, mouth, chin], [eyes, target, chin])
     return out
 
 

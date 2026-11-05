@@ -49,6 +49,7 @@ BREATH_RISE = 0.008  # head heights a full breath lifts the head by
 # most OWN_JAW_MAX radians.
 JAW_HINGE = (0.0, 0.1, -1.35)
 OWN_JAW_MAX = 0.5
+MOUTH_BOX = 0.3  # how far round the jaw (shares of its size on screen) the head's inside may show
 OWN_MOUTH_INSIDE = (0.16, 0.06, 0.06)  # RGB of a head's own inside, seen between its parted lips
 
 VERTEX_SHADER = """
@@ -94,14 +95,19 @@ FRAGMENT_SHADER = """
 uniform sampler2D tex;
 uniform bool seam;       // drawing the skin across the lips, which gives way where they part
 uniform bool own_mouth;  // nothing added inside: the head's own inside shows between the lips...
-uniform vec3 inside;     // ...in this colour (BGR)
+uniform vec3 inside;     // ...in this colour (BGR): its back faces around the mouth (mouth_box,
+uniform vec4 mouth_box;  // screen px) with no outside of the head behind them (skin's depth)
+uniform sampler2D skin;
 in vec2 uv;
 in float shade;
 in vec3 normal;
 out vec4 color;
 """ + IN_OPENING + """
 void main() {
-    if (own_mouth && !gl_FrontFacing) {
+    vec2 p = gl_FragCoord.xy;
+    bool near_mouth = all(greaterThan(p, mouth_box.xy)) && all(lessThan(p, mouth_box.zw));
+    // Elsewhere a back face is the back of a tuft of fur, drawn like the rest.
+    if (own_mouth && !gl_FrontFacing && near_mouth && texelFetch(skin, ivec2(p), 0).r == 1.0) {
         // Darker where the inside turns away from the camera, so it reads as a hollow.
         color = vec4(inside * (0.35 + 0.65 * abs(normalize(normal).z)), 1.0);
         return;
@@ -342,6 +348,8 @@ class Head3D:
             self.skin.compare_func = ""
             self.skin_fbo = ctx.framebuffer(depth_attachment=self.skin)
             self.mouth_prog["skin"].value = 1
+            self.prog["skin"].value = 1
+            self.on_jaw = np.nonzero(self.jaw_weight[:, 0] > 0.5)[0]
         self.mouth_prog["proj"].write(self.proj.astype("f4").T.tobytes())
         self.mouth_prog["shift"].value = tuple(self.shift)
         data = np.column_stack([parts.pos, parts.normal, parts.colour, parts.jaw, parts.light]).astype("f4")
@@ -439,6 +447,15 @@ class Head3D:
         jaw[:3, 3] += lower_lip - jaw[:3, 3]
         return skull, jaw
 
+    def _mouth_box(self, jaw: np.ndarray, model_rot: np.ndarray):
+        """Screen box (gl_FragCoord px: x0, y0, x1, y1) around the jaw (model points),
+        reaching MOUTH_BOX of its size further each way."""
+        clip = np.column_stack([jaw @ model_rot.T + self.moved, np.ones(len(jaw))]) @ self.proj.T
+        screen = (clip[:, :2] / clip[:, 3:] + 1) / 2 * (self.out_w, self.out_h)
+        lo, hi = screen.min(axis=0), screen.max(axis=0)
+        grow = MOUTH_BOX * (hi - lo)
+        return (*(lo - grow), *(hi + grow))
+
     def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray):
         if not self.own_mouth:
             # The gap between the lips on screen: upper lip left to right, lower lip back.
@@ -465,7 +482,8 @@ class Head3D:
         if sprite is not self._uploaded:
             self._upload(sprite)
         landmark_moves = self.flat._steady_eyes(offsets)
-        self.vbo.write(self._shape(landmark_moves, ears).astype("f4").tobytes())
+        shaped = self._shape(landmark_moves, ears)
+        self.vbo.write(shaped.astype("f4").tobytes())
         model_rot = FLIP @ rotation @ FLIP
         self.prog["rot"].write(model_rot.astype("f4").T.tobytes())
         self.moved = self.shift + (0.0, self.lift * breath, 0.0)
@@ -483,6 +501,7 @@ class Head3D:
             self.vao.render()
             r.ctx.disable(moderngl.CULL_FACE)
             self.skin.use(1)
+            self.prog["mouth_box"].value = self._mouth_box(shaped[self.on_jaw], model_rot)
         r.msaa.use()
         r.ctx.clear(*self.bg, depth=1.0)
         self._draw_mouth(landmark_moves, model_rot)

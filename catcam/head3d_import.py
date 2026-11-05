@@ -324,7 +324,10 @@ def find_jaw(vertices, faces, landmarks, face_model):
     jaw_seeds = np.unique(tree.query(landmarks[JAW_SEEDS])[1])
     to_jaw = dijkstra(graph, indices=jaw_seeds, min_only=True)
     to_face = dijkstra(graph, indices=np.unique(tree.query(landmarks[FACE_SEEDS])[1]), min_only=True)
-    margin = (to_face - to_jaw) / face_model
+    # Loose bits of the model (a stray tuft) neither reaches, or only one, are wholly its.
+    reached = np.isfinite(to_jaw) & np.isfinite(to_face)
+    with np.errstate(invalid="ignore"):  # unreached: inf - inf, replaced below
+        margin = np.where(reached, to_face - to_jaw, np.where(np.isfinite(to_jaw), 1.0, -1.0)) / face_model
     margin = np.array([margin[near].mean() for near in around])  # a smooth line to cut along
     # Only the jaw's own patch: not specks of skin it happens to reach first elsewhere.
     patch = margin > 0
@@ -408,7 +411,10 @@ def import_glb(glb: str, name: str, own_mouth: bool = False):
     # The face landmarks on the model's surface.
     lx = np.clip(points[:, 0].round().astype(int), 0, w - 1)
     ly = np.clip(points[:, 1].round().astype(int), 0, h - 1)
-    landmarks = cam.unproject(points[:, :2], depth[ly, lx])
+    # A point the face fit put past the model's edge (a chin below a head cut off at
+    # the neck) takes the depth of the nearest spot on the model.
+    _, (ny, nx) = distance_transform_edt(depth < -1e8, return_indices=True)
+    landmarks = cam.unproject(points[:, :2], depth[ny[ly, lx], nx[ly, lx]])
     faces, normals, uv, jaw = mesh.faces, mesh.vertex_normals, mesh.visual.uv, np.zeros(0, np.float32)
     slit = {}
     if own_mouth:
