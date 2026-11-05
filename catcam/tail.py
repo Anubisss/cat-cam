@@ -40,6 +40,8 @@ SWISH = 3.0  # side-to-side sway, in screen heights / s^2
 SWISH_RATE = 0.4  # sways per second
 SWISH_WAVES = 0.6  # waves along the tail: the sway travels from root to tip
 FADE_RATE = 0.12  # how fast the tail rises / sinks, per frame
+HAND_GONE = 0.15  # the tail hand's presence (see Paws) below which it is gone: the
+                  # tracker loses a fast hand for a few frames now and then
 
 SKIN_WIDTH = 64  # texture columns across the tail
 SKIN_INSET = 0.08  # of the arm width, left off each side (the photo's soft edge)
@@ -90,7 +92,7 @@ class Tail:
     def update(self, hand, presence: float, dt: float, cat_face_center: np.ndarray, cat_face_width: float):
         """hand: (x, y, ...) where your tail hand is on screen (see Paws), or None;
         presence: 0..1 how surely it is there."""
-        present = hand is not None and presence > 0.5
+        present = hand is not None and presence > HAND_GONE
         if present and self.presence < 0.02:  # rising: from the side the hand is on
             self.side = 1.0 if hand[0] >= cat_face_center[0] else -1.0
         self.presence += FADE_RATE * (float(present) - self.presence)

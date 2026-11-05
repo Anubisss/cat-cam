@@ -20,6 +20,11 @@ from catcam.head_pose import OneEuroFilter
 PAW_SIZE = 1.1  # paw width relative to your palm width
 PAW_MIN_CUTOFF, PAW_BETA = 1.5, 0.02
 FADE_RATE = 0.35  # how fast paws appear / disappear
+# A detected hand within this many paw sizes of where a still visible paw was
+# is that same hand, whatever MediaPipe guesses (its left/right guess flips
+# now and then, which would swap a paw for the tail or the other paw).
+SAME_HAND = 2.5
+TRACKED = 0.1  # a paw counts as still visible above this presence
 ARM_LENGTH = 14  # in paw widths
 DEFAULT_FACE_WIDTH = 0.25  # of the camera width, used until a face is seen
 PHOTO_ARM_LENGTH = 8  # paw photos' arms are extended to this many paw widths
@@ -252,19 +257,38 @@ class Paws:
                 slot["filter"] = OneEuroFilter(PAW_MIN_CUTOFF, PAW_BETA)  # restart fresh
 
     def _label(self, detections):
-        """Gives each hand its own slot. MediaPipe sometimes calls both hands
-        "Left" (e.g. crossed); then each goes to the slot nearest to it."""
-        if len(detections) != 2 or detections[0][0] != detections[1][0]:
-            return detections
-        (_, a), (_, b) = detections
+        """Gives each detected hand its slot ("Left" or "Right"): a hand close
+        to where a still visible paw was continues that paw; other hands go by
+        MediaPipe's guess, or by which side they are on if both got the same guess."""
+        tracked = {
+            name: slot["params"] for name, slot in self.slots.items()
+            if "params" in slot and slot["presence"] > TRACKED
+        }
 
         def distance(name, target):
-            last = self.slots.get(name, {}).get("params")
-            return 0.0 if last is None else float(np.linalg.norm(last[:2] - target[:2]))
+            """How far target is from the paw `name`, in paw sizes (inf if none)."""
+            last = tracked.get(name)
+            if last is None:
+                return np.inf
+            return float(np.linalg.norm(last[:2] - target[:2]) / max(last[2], 1.0))
 
-        straight = distance("Left", a) + distance("Right", b)
-        swapped = distance("Right", a) + distance("Left", b)
-        return [("Left", a), ("Right", b)] if straight <= swapped else [("Right", a), ("Left", b)]
+        names = ("Left", "Right")
+        if len(detections) == 2:
+            (guess_a, a), (guess_b, b) = detections
+            near = lambda name, target: min(distance(name, target), SAME_HAND)
+            straight = near("Left", a) + near("Right", b)
+            swapped = near("Right", a) + near("Left", b)
+            if straight != swapped:  # at least one hand continues a paw
+                return [("Left", a), ("Right", b)] if straight < swapped else [("Right", a), ("Left", b)]
+            if guess_a != guess_b:
+                return detections
+            # Both guessed the same: your right hand is on the image's left.
+            return [("Right", a), ("Left", b)] if a[0] < b[0] else [("Left", a), ("Right", b)]
+        labelled = []
+        for guess, target in detections:
+            near = min(names, key=lambda name: distance(name, target))
+            labelled.append((near if distance(near, target) < SAME_HAND else guess, target))
+        return labelled
 
     def draw(self, frame: np.ndarray, paws, hidden=()) -> np.ndarray:
         """paws: a PawSprite for every hand, or {(view, hand): PawSprite} (see

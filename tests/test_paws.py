@@ -193,3 +193,38 @@ def test_closed_paws_curl_their_toes_in():
         tops.append(rows.min())
         assert rows.max() == 399  # the arm is unchanged
     assert tops[1] > tops[0] + 10  # the toes are shorter
+
+
+def _detect(*hands):
+    """A HandLandmarkerResult with (x, y, label) hands."""
+    return SimpleNamespace(
+        hand_landmarks=[_hand(x, y) for x, y, _ in hands],
+        handedness=[[SimpleNamespace(category_name=label)] for _, _, label in hands],
+    )
+
+
+def _update(paws, result, frames=1):
+    for _ in range(frames):
+        paws.update(result, None, (1280, 720), 1 / 30, np.array([640.0, 300.0]), 300.0)
+
+
+def test_a_hand_keeps_its_slot_when_its_left_right_guess_flips():
+    paws = Paws(out_width=1280)
+    _update(paws, _detect((0.8, 0.5, "Right")), 20)
+    _update(paws, _detect((0.79, 0.5, "Left")), 3)  # MediaPipe briefly calls it a left hand
+    assert paws.slots["Right"]["presence"] > 0.9
+    assert paws.slots.get("Left", {}).get("presence", 0) < 0.02
+
+
+def test_two_hands_keep_their_slots_when_both_guesses_flip():
+    paws = Paws(out_width=1280)
+    _update(paws, _detect((0.2, 0.5, "Left"), (0.8, 0.5, "Right")), 20)
+    _update(paws, _detect((0.21, 0.5, "Right"), (0.79, 0.5, "Left")), 3)
+    assert paws.slots["Left"]["params"][0] < 640 < paws.slots["Right"]["params"][0]
+
+
+def test_a_new_hand_far_away_goes_by_its_guess():
+    paws = Paws(out_width=1280)
+    _update(paws, _detect((0.8, 0.5, "Right")), 20)
+    _update(paws, _detect((0.8, 0.5, "Right"), (0.2, 0.5, "Left")), 3)
+    assert paws.slots["Left"]["params"][0] < 640 < paws.slots["Right"]["params"][0]

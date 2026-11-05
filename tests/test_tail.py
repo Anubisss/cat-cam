@@ -53,3 +53,17 @@ def test_tail_bends_and_trails_behind_a_moving_hand():
     off_line = np.abs((p[:, 0] - p[0, 0]) * uy - (p[:, 1] - p[0, 1]) * ux)
     assert off_line.max() > 30  # curved, not a straight stick
     assert p[-1, 0] > 600  # the tip is still on its way
+
+
+def test_tail_rides_out_a_few_frames_without_the_hand():
+    from catcam.paws import FADE_RATE
+
+    tail = Tail((W, H))
+    hand = np.array([1000.0, 250.0])
+    _run(tail, hand, 2.0)
+    tip = tail.points[-1].copy()
+    presence = 1.0
+    for _ in range(4):  # the tracker misses the hand for 4 frames
+        presence += FADE_RATE * (0 - presence)
+        tail.update(hand, presence, 1 / 30, FACE_CENTER, FACE_WIDTH)
+    assert np.linalg.norm(tail.points[-1] - tip) < 10  # the tail stays up
