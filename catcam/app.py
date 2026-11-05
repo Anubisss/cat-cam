@@ -3,10 +3,11 @@
 Pick a cat, then it copies you live: it turns, nods and tilts with your head,
 copies your whole face (brows, eyes, cheeks, lips, jaw) and your hands become
 paws. Only the rendered cat goes out to the virtual camera; no webcam pixels
-are ever sent, so your face is never visible.
+are ever sent, so your face is never visible. An animal with a voice (the
+dog) also turns your speech into its sounds on a virtual microphone.
 
-Run:  uv run cat-cam      then pick "OBS Virtual Camera" in Zoom.
-      uv run cat-cam --camera 1   to use another webcam.
+Run:  uv run cat-cam      then pick "OBS Virtual Camera" (and "BlackHole 2ch") in Zoom.
+      uv run cat-cam --camera 1   to use another webcam, --mic N another microphone.
 Keys in the preview window: c = change cat, n = "this is my neutral face"
 (recalibrate), q = quit.
 """
@@ -34,6 +35,7 @@ from catcam.paths import FACE_MODEL, HAND_MODEL
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker, put_text
+from catcam.voice import VirtualMic, Voice
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
@@ -73,6 +75,7 @@ class Cat:
     paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
     sprite: np.ndarray
     background: np.ndarray
+    sounds: list  # what your syllables become, see catcam.voice; empty = your own voice
 
 
 def load_cats(renderer: Renderer) -> list[Cat]:
@@ -95,6 +98,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
             sprite=a.sprite,
             background=a.background,
+            sounds=a.sounds,
         ))
     return cats
 
@@ -266,6 +270,9 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Cat face filter for Zoom.")
     parser.add_argument("--camera", type=int, default=0, metavar="N",
                         help="webcam to use (default 0; try 1 if the wrong camera opens)")
+    parser.add_argument("--mic", default=None, metavar="NAME",
+                        help="microphone, by name or number (default: the system's; "
+                             "list them: python -m catcam.voice --list)")
     return parser.parse_args(argv)
 
 
@@ -317,7 +324,7 @@ def frames(webcam):
             time.sleep(0.01)
 
 
-def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam, webcam):
+def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, trackers, vcam, webcam):
     face_tracker, hand_tracker = trackers
     state, paws = FaceState(), Paws(OUT_W)
     start = last = time.monotonic()
@@ -333,6 +340,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, trackers, vcam
         state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now)
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = cats[controls.current]
+        voice.sounds = cat.sounds
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
 
         special = effects.update(now, cat.name)
@@ -363,17 +371,23 @@ def main(argv=None):
 
     effects = Effects(load_effects(), (OUT_W, OUT_H))
     effects.start()
+    voice = Voice()
+    mic = VirtualMic(voice, args.mic)
     cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
     mouse = Mouse(picker)
     cv2.setMouseCallback(WINDOW, mouse)
-    print(f"Streaming to '{vcam.device}'. Select it as the camera in Zoom.\n"
-          "Pick a cat in the window. Keep a relaxed face for a second at the start.")
+    print(f"Streaming to '{vcam.device}'. Select it as the camera in Zoom.")
+    if mic.start():
+        print(f"Listening to '{mic.heard}', sending your voice to '{mic.device}'. "
+              "Select it as the microphone in Zoom.")
+    print("Pick a cat in the window. Keep a relaxed face for a second at the start.")
     try:
         with vcam:
-            stream(cats, Controls(picker, mouse), effects, trackers, vcam, webcam)
+            stream(cats, Controls(picker, mouse), effects, voice, trackers, vcam, webcam)
     except KeyboardInterrupt:
         pass
     finally:
+        mic.stop()
         effects.stop()
         webcam.release()
         cv2.destroyAllWindows()

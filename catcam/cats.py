@@ -8,6 +8,7 @@ import numpy as np
 
 from catcam.paths import ASSETS, PORTRAITS
 from catcam.paw_photos import is_paw_photo, paw_files
+from catcam.voice import load_sounds
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class CatAssets:
     points: np.ndarray  # (478, 3) face landmarks in sprite px (z uses the x scale)
     background: np.ndarray  # (3,) BGR colour of the portrait's backdrop
     paws: dict  # {(view, hand): BGRA paw photo}, see catcam.paw_photos; empty if none
+    sounds: list  # mono sounds from voice/, see catcam.voice; empty if none
 
 
 def available(assets: Path = ASSETS) -> list[str]:
@@ -54,4 +56,4 @@ def load(name: str, assets: Path = ASSETS) -> CatAssets:
     for key, path in paw_files(name, assets).items():
         if path.is_file():
             paws[key] = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    return CatAssets(name, sprite, points, background, paws)
+    return CatAssets(name, sprite, points, background, paws, load_sounds(folder / "voice"))

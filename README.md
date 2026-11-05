@@ -5,7 +5,9 @@ with your head, copies your whole face (brows, blinks, cheeks, smile, open
 mouth with fangs) and your hands become its paws: the top of the paw when
 you show the back of your hand, the soft toe beans when you show your palm. Its ears perk up when you raise
 your brows, flatten when you frown, and twitch now and then, and the side of
-its head that turns away from the light falls into shadow.
+its head that turns away from the light falls into shadow. Goldie also takes
+over your voice: every syllable you say comes out as a bark, as loud as you
+said it.
 
 Your own face is never sent anywhere. Only the drawn cat goes out to the
 virtual camera, and everything runs locally on your computer.
@@ -23,6 +25,8 @@ virtual camera, and everything runs locally on your computer.
   libraries for you.
 - [**OBS Studio**](https://obsproject.com). Only its virtual camera driver is
   used; OBS itself stays closed.
+- [**BlackHole 2ch**](https://existential.audio/blackhole/), a virtual
+  microphone, for Goldie's barking. Without it everything else still works.
 
 ## One-time setup
 
@@ -52,7 +56,16 @@ virtual camera, and everything runs locally on your computer.
    4. **Quit and reopen the terminal app** (⌘Q). The permission only takes
       effect after a restart.
 
-4. **Get the code**:
+4. **Install the virtual microphone** (for barking):
+
+   ```sh
+   brew install blackhole-2ch
+   ```
+
+   It asks for your password. macOS only loads it after its audio service
+   restarts: run `sudo killall coreaudiod` (or restart the Mac).
+
+5. **Get the code**:
 
    ```sh
    git clone https://github.com/tarrcimar/cat-cam.git
@@ -74,6 +87,18 @@ A window opens with the cat picker. Click a cat, or press its number.
 In Zoom, go to *Settings → Video → Camera* and choose **OBS Virtual Camera**.
 Do the same in any other app (Meet, Teams, FaceTime, ...). If the camera is
 not listed, restart Zoom while Cat Cam is running.
+
+To hear the barking yourself, live and without Zoom or the camera, put on
+headphones and run `uv run python -m catcam.voice` (`--list` shows the
+audio devices; `--mic` and `--out` pick them by name or number, e.g.
+`--mic Brio --out AirPods`).
+
+For the barking, choose **BlackHole 2ch** under *Settings → Audio →
+Microphone* too, and set *Suppress background noise* to **Low**: Zoom
+otherwise filters barks out as noise. Use headphones, so the others' voices
+don't get barked back at them. With a cat, your own voice goes through
+unchanged, so you can leave Zoom's microphone on BlackHole. macOS asks the
+first time whether your terminal may use the microphone; allow it.
 
 Keep a relaxed face for the first second. The cat compares your face against
 how it looks at the start, and the way you sit at the start counts as "looking
@@ -100,6 +125,8 @@ unmirrored picture, just as a normal camera would send.
 
 ```sh
 uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera opens)
+uv run cat-cam --mic Brio   # use another microphone, by (part of its) name or number
+                            # (list them: uv run python -m catcam.voice --list)
 ```
 
 ## Troubleshooting
@@ -112,6 +139,9 @@ uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera ope
 | Zoom does not list "OBS Virtual Camera" | Restart Zoom while Cat Cam is running. |
 | The cat looks off while you are relaxed | Press `n` with a neutral face. |
 | "Looking for your face..." | Face the camera and make sure your face is lit. |
+| "No virtual microphone found" | Install BlackHole (see above) and restart Cat Cam. |
+| Zoom hears no barks | Choose **BlackHole 2ch** as Zoom's microphone, set background noise suppression to Low, and allow microphone access for your terminal. |
+| Barks without you talking | Use headphones; a noisy room or loud speakers also trigger barks. |
 
 ## Add your own cat
 
@@ -132,6 +162,8 @@ uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera ope
    the left and the right paw on the right, separated by a vertical purple
    line. `prepare` cuts them out too; a cat without paw photos gets drawn
    paws in its colours.
+   To give it a voice, put short sounds (`.ogg`, `.wav`, `.flac` or `.mp3`)
+   in `assets/cats/<Name>/voice/`; each syllable you say plays one of them.
 3. Run `uv run cat-cam`. The new cat appears in the picker.
 
 ## Tuning
@@ -148,6 +180,9 @@ These constants sit at the top of their files:
 | `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
+| `ABOVE_NOISE`, `RISE` | `catcam/voice.py` | how loud you must talk to bark, and how clearly syllables must stand apart |
+| `MIN_GAP` | `catcam/voice.py` | shortest time between two barks |
+| `GAIN`, `SPEED` | `catcam/voice.py` | bark volume and pitch, from your quietest to your loudest syllables |
 
 ## How it works
 
@@ -167,6 +202,11 @@ These constants sit at the top of their files:
    drawn where your hands are (`catcam/paws.py`), showing their top or their
    sole depending on which way your hand faces.
 6. The frame goes to the OBS virtual camera through pyvirtualcam.
+7. Your microphone is followed in 10 ms blocks (`catcam/voice.py`). A
+   syllable starts where your loudness rises clearly above the room's noise
+   and above the dip after the previous syllable; each start plays one of the
+   animal's sounds, louder and a little higher for louder syllables. The mix
+   goes to BlackHole, which the call uses as its microphone.
 
 ## Development
 
@@ -187,6 +227,7 @@ catcam/
   face_motion.py   expression transfer
   head_pose.py     head rotation and the One Euro smoothing filter
   paws.py          paws
+  voice.py         your syllables as the animal's sounds, out to the virtual microphone
   paw_photos.py    turns paw photos into paw sprites (used by prepare)
   prepare.py       turns all_cats/*.png into assets/cats/*
   landmark_fit.py  finds a cat's face points (used by prepare)
@@ -196,3 +237,8 @@ models/            MediaPipe face and hand models
 ```
 
 The MediaPipe models in `models/` are by Google and licensed under Apache 2.0.
+
+Goldie's bark in `assets/cats/Goldie/voice/` is public domain (CC0), as
+cleaned up by [Space Station 14](https://github.com/space-wizards/space-station-14/blob/master/Resources/Audio/Voice/Vulpkanin/attributions.yml)
+from a Freesound recording by
+[Geoff-Bremner-Audio](https://freesound.org/people/Geoff-Bremner-Audio/sounds/688201/).
