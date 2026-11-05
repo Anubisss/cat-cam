@@ -189,6 +189,8 @@ These constants sit at the top of their files:
 
 ## Development
 
+Want to contribute or make a release? See [CLAUDE.md](CLAUDE.md).
+
 ```sh
 uv run pytest          # tests, including render checks on every cat
 uv run ruff check .    # lint
