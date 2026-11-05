@@ -15,6 +15,9 @@ def meshes(real_cats):
 @pytest.mark.gl
 def test_every_cat_has_two_ears_above_its_face(meshes):
     for cat, mesh in meshes:
+        if cat.name == "Goldie":  # a dog: floppy ears hang beside the face and stay put
+            assert mesh.ears == []
+            continue
         assert [ear.side for ear in mesh.ears] == [-1, 1], cat.name
         for ear in mesh.ears:
             assert not ear.weights[:478].any(), cat.name  # the face never moves with the ears
@@ -26,6 +29,8 @@ def test_every_cat_has_two_ears_above_its_face(meshes):
 @pytest.mark.gl
 def test_flattened_ears_tip_outward_and_perked_ones_inward(meshes):
     for cat, mesh in meshes:
+        if not mesh.ears:
+            continue
         for ear in mesh.ears:
             tip = ear.weights.argmax()
             flat = bend(mesh.rest, mesh.ears, (0.3, 0.3))

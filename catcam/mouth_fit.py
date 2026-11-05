@@ -84,11 +84,19 @@ def snap_mouth(sprite: np.ndarray, landmarks: np.ndarray, face_width: float) -> 
     middle = np.searchsorted(xs, centre[0])
     left = int(np.argmax(ys[:middle]))  # the corners: where the crease turns, at its lowest
     right = middle + int(np.argmax(ys[middle:]))
+    corners = [float(xs[left]), float(xs[right])]
+    # A corner at the end of the traced area is no turn: the crease ran on into
+    # the fur, e.g. along a whisker. The portraits are frontal, so mirror the other.
+    if left == 0:
+        corners[0] = 2 * centre[0] - corners[1]
+    elif right == len(xs) - 1:
+        corners[1] = 2 * centre[0] - corners[0]
     fitted = landmarks[[UPPER_INNER_LIP[0], UPPER_INNER_LIP[-1]], 0]
-    too_wide = xs[left] - fitted[0] > TOO_WIDE * face_width and fitted[1] - xs[right] > TOO_WIDE * face_width
+    too_wide = (corners[0] - fitted[0] > TOO_WIDE * face_width
+                and fitted[1] - corners[1] > TOO_WIDE * face_width)
     if not (off or too_wide):
         return landmarks
-    seam_x = np.linspace(xs[left], xs[right], len(UPPER_INNER_LIP))
+    seam_x = np.linspace(*corners, len(UPPER_INNER_LIP))
     seam = np.column_stack([seam_x, np.interp(seam_x, xs, ys)])
 
     lips = UPPER_INNER_LIP + LOWER_INNER_LIP
