@@ -205,11 +205,8 @@ def import_glb(glb: str, name: str):
     depth = raster.depth(cam, (w, h))
     print(f"{name}: portrait outline overlap {iou:.3f}")
 
-    # Every vertex's spot in the portrait, and whether the portrait shows it.
-    photo_px, z = cam.project(vertices)
-    ui = np.clip(photo_px[:, 0].round().astype(int), 0, w - 1)
-    vi = np.clip(photo_px[:, 1].round().astype(int), 0, h - 1)
-    front = (z >= depth[vi, ui] - DEPTH_TOL) & (sprite[vi, ui, 3] > 128)
+    # Every vertex's spot in the portrait.
+    photo_px, _ = cam.project(vertices)
     # The face landmarks on the model's surface.
     lx = np.clip(points[:, 0].round().astype(int), 0, w - 1)
     ly = np.clip(points[:, 1].round().astype(int), 0, h - 1)
@@ -225,12 +222,11 @@ def import_glb(glb: str, name: str):
     np.savez_compressed(
         mesh_file, vertices=vertices.astype("f4"), normals=mesh.vertex_normals.astype("f4"),
         uv=mesh.visual.uv.astype("f4"), faces=mesh.faces.astype("i4"),
-        photo_px=photo_px.astype("f4"), front=front, landmarks=landmarks.astype("f4"),
+        photo_px=photo_px.astype("f4"), landmarks=landmarks.astype("f4"),
         cam_rot=cam.rot.astype("f4"), cam_scale=np.float32(cam.scale),
         eye_index=eye_index, eye_px=eye_px.astype("f4"), eye_weight=eye_weight.astype("f4"))
     cv2.imwrite(str(texture_file), texture)
-    print(f"  {len(vertices)} vertices, {front.sum()} seen in the portrait, "
-          f"{len(eye_index)} eye texels -> {mesh_file.parent}")
+    print(f"  {len(vertices)} vertices, {len(eye_index)} eye texels -> {mesh_file.parent}")
 
 
 if __name__ == "__main__":

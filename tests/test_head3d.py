@@ -26,7 +26,7 @@ def _box_head(folder, name, points, depth=0.02):
     photo_px = centre + scale * v[:, :2] * (1, -1)
     landmarks = np.column_stack([(points[:, :2] - centre) / scale * (1, -1), np.full(len(points), depth)])
     np.savez(folder / name / "head3d.npz", vertices=v, normals=v / np.linalg.norm(v, axis=1, keepdims=True),
-             uv=uv, faces=faces, photo_px=photo_px.astype("f4"), front=v[:, 2] > 0,
+             uv=uv, faces=faces, photo_px=photo_px.astype("f4"),
              landmarks=landmarks.astype("f4"), cam_rot=np.eye(3, dtype="f4"), cam_scale=np.float32(scale),
              eye_index=np.zeros(0, "i4"), eye_px=np.zeros((0, 2), "f4"), eye_weight=np.zeros(0, "f4"))
     texture = np.zeros((8, 8, 3), np.uint8)
@@ -82,4 +82,4 @@ def test_vertices_follow_the_landmarks(box, david):
     # Down the portrait is down the model, at the portrait's scale, as much as each vertex follows.
     assert np.allclose(moved[:, 1], -50.0 / scale * weight, atol=1e-6)
     assert np.allclose(moved[:, [0, 2]], 0, atol=1e-6)
-    assert weight[box.rest[:, 2] < 0].max() == 0  # the back isn't in the portrait
+    assert weight.max() > 0.5
