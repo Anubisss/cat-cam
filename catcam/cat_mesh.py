@@ -413,6 +413,10 @@ class CatMesh:
 
         self.face_count = len(landmarks)
         self.face_width = np.ptp(landmarks[:, 0])
+        # Mouth fitting adjusts the mesh to the visible crease. Keep sampling
+        # the photo at the original landmarks so that fitting does not pull
+        # the lower lip's texture up onto the seam.
+        texture_face = landmarks[:, :2].copy()
         landmarks = snap_mouth(sprite, landmarks, self.face_width)
         face = _closed_mouth(landmarks, self.face_width)
         outline_xy = _outline(sprite[..., 3])
@@ -449,7 +453,9 @@ class CatMesh:
         ctx = renderer.ctx
         self.vbo = ctx.buffer(reserve=len(self.rest) * 3 * 4, dynamic=True)
         self.shade_vbo = ctx.buffer(reserve=len(self.rest) * 4, dynamic=True)
-        uv = (photo[:, :2] / (tex_w, tex_h)).astype("f4")
+        uv_points = photo[:, :2].copy()
+        uv_points[:self.face_count] = texture_face
+        uv = (uv_points / (tex_w, tex_h)).astype("f4")
         triangles = _face_triangles(photo[:, :2], self.face_width)
         self.face_vao = ctx.vertex_array(
             renderer.face_prog,

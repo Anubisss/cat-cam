@@ -25,6 +25,7 @@ CREASE = 0.012  # a crease is darker than the photo this far above and below it
 SEARCH = (0.05, 0.03)  # checking the fit: how far (up, down) to look for the crease
 BAND = 0.012  # ...averaging columns this wide
 TOLERANCE = 0.015  # a fit this close to the crease is kept
+CENTER_TOLERANCE = 0.01  # the middle matters most: a lower lip can hide a central miss
 TOO_WIDE = 0.04  # a fit whose corners reach this much past the crease's on both sides is too wide
 TRACE = (0.3, 0.08)  # tracing: half the width and height of the area searched
 FOLLOW = (0.03, 0.06)  # the face follows the lips: blending radius, falloff
@@ -77,8 +78,16 @@ def snap_mouth(sprite: np.ndarray, landmarks: np.ndarray, face_width: float) -> 
     between them, if the fit clearly missed it."""
     crease = _creases(sprite, face_width)
     misses = _misses(crease, landmarks, face_width)
+    middle_misses = misses[len(misses) // 2 - 1:len(misses) // 2 + 2]
+    middle_miss = float(np.median(middle_misses))
+    central_miss = (
+        abs(middle_miss) >= CENTER_TOLERANCE * face_width
+        and np.count_nonzero(np.sign(middle_misses) == np.sign(middle_miss)) >= 2
+    )
     miss = float(np.median(misses))
-    off = abs(miss) >= TOLERANCE * face_width and (np.sign(misses) == np.sign(miss)).all()
+    off = central_miss or (
+        abs(miss) >= TOLERANCE * face_width and (np.sign(misses) == np.sign(miss)).all()
+    )
     centre = (landmarks[UPPER_INNER_LIP, :2] + landmarks[LOWER_INNER_LIP, :2]).mean(axis=0) / 2
     xs, ys = trace(crease, centre, face_width)
     middle = np.searchsorted(xs, centre[0])
