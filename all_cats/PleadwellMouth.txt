@@ -1,0 +1,9 @@
+# Where Pleadwell's lips meet, corner to corner (portrait px): a small mouth
+# under a long philtrum, which the face fit puts at the bottom of his chin.
+555, 930
+580, 938
+605, 943
+625, 944
+645, 943
+670, 938
+695, 930

@@ -1,13 +1,16 @@
 # Cat Cam
 
-Be Woofgang, a golden retriever, in your Zoom calls. He is a real 3D head that
-turns, nods and tilts with your head, copies your whole face (brows, blinks,
-cheeks, smile) and opens his own mouth with yours, his jaw swinging down, while
-the side of his head that turns away from the light falls into shadow. Your
-hands become his paws, toe by toe: the top of the paw when you show the back of
-your hand, the toe beans when you show your palm. When you talk, the call hears
-him bark instead of your voice. When you sit still, he breathes and looks
-around on his own. And you can put any picture or video behind him.
+Be a cat, or Woofgang the golden retriever, in your Zoom calls. Pick one of
+eight: Gingersnap, Grinbert, Grumbledore, Grumpkin, Meringue, Pleadwell,
+Wrinklestiltskin or Woofgang. Each is a real 3D head that turns, nods and tilts
+with your head, copies your whole face (brows, blinks, cheeks, smile) and opens
+its own mouth with yours, its jaw swinging down to show teeth and tongue, while
+the side of its head that turns away from the light falls into shadow. Your
+hands become its paws, toe by toe: the top of the paw when you show the back of
+your hand, the toe beans when you show your palm. When you talk as Woofgang,
+the call hears him bark instead of your voice. When you sit still, your animal
+breathes and looks around on its own. And you can put any picture or video
+behind it.
 
 Your own face is never sent anywhere. Only the drawn cat goes out to the
 virtual camera, and everything runs locally on your computer.
@@ -193,7 +196,8 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
    [docs/3d-heads.md](docs/3d-heads.md#how-the-eyes-and-mouth-work).
 3. Run `uv run cat-cam`. The new cat appears in the picker.
 4. Optionally give it a 3D head, generated from the same portrait on your
-   Mac: see [docs/3d-heads.md](docs/3d-heads.md).
+   Mac or with Meshy: see [docs/3d-heads.md](docs/3d-heads.md). A cat that
+   only exists as a Meshy model gets its portrait rendered from the model.
 
 ## Tuning
 
@@ -235,7 +239,7 @@ These constants sit at the top of their files:
    simulated with momentum, even bending and a bend limit, and wrapped in the
    skin of the cat's paw photo.
 6. A 3D head (`catcam/head3d.py`) is tied to the photo cat's face points, so
-   it takes on the same expressions. One with its own mouth, like Woofgang's,
+   it takes on the same expressions. One with its own mouth, like all of these,
    has its lower jaw found and cut free when it is imported: it grows over the
    model from the lower lip, the upper face from the upper lip, and they meet
    in the slit between the lips (`catcam/head3d_import.py`). The jaw then swings

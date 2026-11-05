@@ -82,7 +82,9 @@ an image and check them, as the tests only catch holes and gross errors.
    `docs/picker.jpg` if the picker changed, and commit the pictures in
    `all_cats/` together with `assets/cats/<Name>/`.
 5. Optionally make its 3D head (`docs/3d-heads.md`) and check it with
-   `uv run python tools/head3d_sheet.py <Name> -o sheet.jpg`.
+   `uv run python tools/head3d_sheet.py <Name> -o sheet.jpg`. A cat that only
+   exists as a 3D head (a Meshy model) gets its portrait from it first:
+   `tools/head_portrait.py`, run in Blender without its window.
 
 ## Making a release
 

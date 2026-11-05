@@ -54,7 +54,8 @@ def test_load_rejects_missing_cutout(tmp_path):
 
 
 def test_shipped_cats(real_cats):
-    names = ["Woofgang"]
+    names = ["Gingersnap", "Grinbert", "Grumbledore", "Grumpkin", "Meringue", "Pleadwell", "Woofgang",
+             "Wrinklestiltskin"]
     assert [c.name for c in real_cats] == names
     for cat in real_cats:
         assert cat.sprite.shape[2] == 4

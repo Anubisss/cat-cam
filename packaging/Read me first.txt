@@ -44,10 +44,10 @@ USE
 - Turn on "Background" (or press B) and pick a picture or video to put
   behind the animal. Turn it off and on again to pick another.
 - With BlackHole installed, choose "BlackHole 2ch" as the microphone in
-  Zoom (Settings > Audio > Microphone): the call hears a bark for every
-  syllable you say, never your voice.
-- Sit still and quiet for a few seconds and he breathes and looks around
-  on his own.
+  Zoom (Settings > Audio > Microphone): as Woofgang the dog, the call
+  hears a bark for every syllable you say, never your voice.
+- Sit still and quiet for a few seconds and your animal breathes and looks
+  around on its own.
 - In the Cat Cam window: C picks another cat, Q quits.
 
 TROUBLE?
