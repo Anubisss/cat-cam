@@ -141,12 +141,21 @@ MOUTH_FRAGMENT_SHADER = """
 in vec3 colour;
 in vec3 normal;
 in float light;
+uniform bool clip;        // only seen through the opening between the lips...
+uniform sampler2D skin;   // ...or else never in front of the head's outside (its depth)
 out vec4 color;
 """ + IN_OPENING + """
 void main() {
     // Only seen through the mouth: parts that would poke out through the chin or
-    // cheeks (which slope back faster than the mouth inside) stay hidden.
-    if (!in_opening(gl_FragCoord.xy)) discard;
+    // cheeks (which slope back faster than the mouth inside) stay hidden. A head with
+    // its own mouth really parts its lips: there, what pokes out in front of its skin
+    // goes, and its skin hides the rest.
+    if (clip) {
+        if (!in_opening(gl_FragCoord.xy)) discard;
+    } else {
+        float outside = texelFetch(skin, ivec2(gl_FragCoord.xy), 0).r;
+        if (outside < 1.0 && gl_FragCoord.z < outside) discard;
+    }
     float facing = max(dot(normalize(normal), normalize(vec3(0.2, 0.4, 1.0))), 0.0);
     color = vec4((colour * light * (0.55 + 0.45 * facing)).bgr, 1.0);  // BGR like the app
 }
@@ -317,14 +326,22 @@ class Head3D:
         self.prog["inside"].value = OWN_MOUTH_INSIDE[::-1]
         # The portrait's camera looks straight at the face: its axis is where the face looks.
         origin, axes, width = mouth_frame(self.landmarks, mesh["cam_rot"][2].astype(np.float64))
+        if "slit_middle" in mesh.files:  # its own lips: the mouth sits where they really meet
+            origin, width = mesh["slit_middle"] - centre, float(mesh["slit_width"])
         self.mouth_origin, self.mouth_axes, self.mouth_width = origin, axes, width
         # The portrait's lips rarely meet exactly; the mouth opens as far as they part
         # from there, so a closed mouth shows no gap.
         half_gap = (self.landmarks[LOWER_INNER_LIP] - self.landmarks[UPPER_INNER_LIP]) / 2
         self.lips_meet = np.vstack([half_gap, -half_gap[::-1]])
-        parts = mouth3d.build(flat.lip_tint)
+        parts = mouth3d.build(flat.lip_tint, cavity=not self.own_mouth)
         self.mouth_prog = ctx.program(vertex_shader=MOUTH_VERTEX_SHADER,
                                       fragment_shader=MOUTH_FRAGMENT_SHADER)
+        self.mouth_prog["clip"].value = not self.own_mouth
+        if self.own_mouth:  # the depth of the head's outside, for the mouth to stay within
+            self.skin = ctx.depth_texture((self.out_w, self.out_h))
+            self.skin.compare_func = ""
+            self.skin_fbo = ctx.framebuffer(depth_attachment=self.skin)
+            self.mouth_prog["skin"].value = 1
         self.mouth_prog["proj"].write(self.proj.astype("f4").T.tobytes())
         self.mouth_prog["shift"].value = tuple(self.shift)
         data = np.column_stack([parts.pos, parts.normal, parts.colour, parts.jaw, parts.light]).astype("f4")
@@ -376,9 +393,9 @@ class Head3D:
         swung = self._swing(self.rest, landmark_moves)
         return shaped + self.jaw_weight * (swung - shaped)
 
-    def _swing(self, points: np.ndarray, landmark_moves: np.ndarray) -> np.ndarray:
-        """points (model, at rest) where the jaw puts them: turned about its hinge
-        as far as your lower lip has dropped, and moved with the upper lip."""
+    def _own_jaw(self, landmark_moves: np.ndarray) -> np.ndarray:
+        """Model -> model (4x4) for the head's own jaw: turned about its hinge as far
+        as your lower lip has dropped, and moved with the upper lip."""
         moved = landmark_moves[list(LIP_MIDDLE)] @ self.to_model.T
         drop = (moved[1] - moved[0]) @ self.mouth_axes[:, 1]  # the lower lip's, down is negative
         hinge = np.array(JAW_HINGE) * self.mouth_width
@@ -386,7 +403,15 @@ class Head3D:
         c, s = np.cos(angle), np.sin(angle)
         turn = self.mouth_axes @ np.array([[1, 0, 0], [0, c, -s], [0, s, c]]) @ self.mouth_axes.T
         pivot = self.mouth_origin + self.mouth_axes @ hinge
-        return (points - pivot) @ turn.T + pivot + moved[0]
+        jaw = np.eye(4)
+        jaw[:3, :3] = turn
+        jaw[:3, 3] = pivot - turn @ pivot + moved[0]
+        return jaw
+
+    def _swing(self, points: np.ndarray, landmark_moves: np.ndarray) -> np.ndarray:
+        """points (model, at rest) where the head's own jaw puts them."""
+        jaw = self._own_jaw(landmark_moves)
+        return points @ jaw[:3, :3].T + jaw[:3, 3]
 
     def _mouth_matrices(self, landmark_moves: np.ndarray):
         """Mouth frame -> model, for the parts moving with the upper lip and with the jaw."""
@@ -399,6 +424,10 @@ class Head3D:
         skull = np.eye(4)
         skull[:3, :3] = self.mouth_axes * self.mouth_width
         skull[:3, 3] = self.mouth_origin + follow
+        if self.jaw_weight is not None:  # the parts in the jaw go with the head's own
+            at_rest = skull.copy()
+            at_rest[:3, 3] = self.mouth_origin
+            return skull, self._own_jaw(landmark_moves) @ at_rest
         c, s = np.cos(angle), np.sin(angle)
         swing = np.eye(4)
         swing[1:3, 1:3] = [[c, -s], [s, c]]
@@ -411,18 +440,17 @@ class Head3D:
         return skull, jaw
 
     def _draw_mouth(self, landmark_moves: np.ndarray, model_rot: np.ndarray):
-        if self.own_mouth:  # nothing to add: its own inside shows
-            return
-        # The gap between the lips on screen: upper lip left to right, lower lip back.
-        ring = UPPER_INNER_LIP + LOWER_INNER_LIP[::-1]
-        lips = self.landmarks[ring] + self.lips_meet + landmark_moves[ring] @ self.to_model.T
-        clip = np.column_stack([lips @ model_rot.T + self.moved, np.ones(len(ring))]) @ self.proj.T
-        ndc = clip[:, :2] / clip[:, 3:]
-        screen = (ndc + 1) / 2 * (self.out_w, self.out_h)  # gl_FragCoord: px from the bottom left
-        opening = [tuple(p) for p in screen]
-        self.prog["opening"].value = opening
+        if not self.own_mouth:
+            # The gap between the lips on screen: upper lip left to right, lower lip back.
+            ring = UPPER_INNER_LIP + LOWER_INNER_LIP[::-1]
+            lips = self.landmarks[ring] + self.lips_meet + landmark_moves[ring] @ self.to_model.T
+            clip = np.column_stack([lips @ model_rot.T + self.moved, np.ones(len(ring))]) @ self.proj.T
+            ndc = clip[:, :2] / clip[:, 3:]
+            screen = (ndc + 1) / 2 * (self.out_w, self.out_h)  # gl_FragCoord: px from the bottom left
+            opening = [tuple(p) for p in screen]
+            self.prog["opening"].value = opening
+            self.mouth_prog["opening"].value = opening
         skull, jaw = self._mouth_matrices(landmark_moves)
-        self.mouth_prog["opening"].value = opening
         self.mouth_prog["rot"].write(model_rot.astype("f4").T.tobytes())
         self.mouth_prog["skull"].write(skull.astype("f4").T.tobytes())
         self.mouth_prog["jaw"].write(jaw.astype("f4").T.tobytes())
@@ -444,12 +472,20 @@ class Head3D:
         self.prog["shift"].value = tuple(self.moved)
         self.mouth_prog["shift"].value = tuple(self.moved)
         r = self.renderer
-        r.msaa.use()
-        r.ctx.clear(*self.bg, depth=1.0)
         r.ctx.enable(moderngl.DEPTH_TEST)
         r.ctx.disable(moderngl.BLEND)
-        self._draw_mouth(landmark_moves, model_rot)
         self.texture.use(0)
+        if self.own_mouth:
+            self.skin_fbo.use()
+            self.skin_fbo.clear(depth=1.0)
+            r.ctx.enable(moderngl.CULL_FACE)
+            self.prog["seam"].value = False
+            self.vao.render()
+            r.ctx.disable(moderngl.CULL_FACE)
+            self.skin.use(1)
+        r.msaa.use()
+        r.ctx.clear(*self.bg, depth=1.0)
+        self._draw_mouth(landmark_moves, model_rot)
         self.prog["seam"].value = False
         self.vao.render()
         if self.seam_vao is not None:

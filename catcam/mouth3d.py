@@ -139,15 +139,16 @@ def _ellipsoid(centre, radii, keep, colour, jaw, light, inward=False, u=24, v=16
     return Parts(pos, normal, colour(pos), jaw(pos), light(pos), faces)
 
 
-def build(tint) -> Parts:
-    """All the mouth parts; tint: the cat's lip colour (RGB, mean 1)."""
+def build(tint, cavity: bool = True) -> Parts:
+    """All the mouth parts; tint: the cat's lip colour (RGB, mean 1). cavity: whether
+    to build the mouth cavity too (a head with its own mouth has its own inside)."""
     tint = np.asarray(tint, float)
     teeth = [_tooth(side * x, r, length, tip, upper)
              for upper, row in ((True, UPPER_TEETH), (False, LOWER_TEETH))
              for x, r, length, tip in row for side in (-1, 1)]
     (cx, cy, cz), radii = CAVITY
     depth = lambda pos: np.clip((CAVITY_FRONT - pos[:, 2]) / (2 * radii[2]), 0, 1)  # noqa: E731
-    cavity = _ellipsoid(
+    hollow = _ellipsoid(
         CAVITY[0], radii, keep=lambda unit: cz + unit[:, 2] * radii[2] <= CAVITY_FRONT,
         colour=lambda pos: np.tile(np.multiply(CAVITY_COLOUR, tint), (len(pos), 1)),
         jaw=lambda pos: np.clip(0.5 - (pos[:, 1] - cy) / radii[1], 0, 1),
@@ -160,4 +161,4 @@ def build(tint) -> Parts:
     top = tongue.pos[:, 1] > TONGUE[0][1]
     depth, half = TONGUE_GROOVE
     tongue.pos[top, 1] -= depth * np.exp(-((tongue.pos[top, 0] / half) ** 2))
-    return _merge(teeth + [_gum(True, tint), _gum(False, tint), tongue, cavity])
+    return _merge(teeth + [_gum(True, tint), _gum(False, tint), tongue] + ([hollow] if cavity else []))

@@ -188,9 +188,11 @@ The mouth is the same for every cat, sized to its lips. To change it, edit
 the constants at the top of `mouth3d.py`, in mouth widths: tooth sizes and
 positions, the tongue, the hinge, and the colours.
 
-**Its own mouth instead** (`--own-mouth`): no teeth, tongue or cavity are
-added. The import finds the head's own lower jaw on the model and cuts it
-free, and the app swings it open with your mouth. Woofgang's is like that:
+**Its own mouth instead** (`--own-mouth`): the head keeps its own lips and
+inside, so no lip cut or mouth cavity is added. The import finds the head's
+own lower jaw on the model and cuts it free, and the app swings it open with
+your mouth, with the same teeth, gums and tongue inside. Woofgang's is like
+that:
 - **Finding the jaw:** the jaw spreads over the model's surface from its lower
   lip and chin, the rest of the face from its upper lip and nose, and the jaw
   ends where the two meet. Going into a fold (a valley in the surface) costs
@@ -201,6 +203,9 @@ free, and the app swings it open with your mouth. Woofgang's is like that:
 - **Cutting it free:** the faces across that line are split along it, and
   every point on it is made twice, once for each side. Nothing stretches
   between the lips as they part; the head's dark inside shows instead.
+- **The mouth inside** is sized and placed by the slit: the import saves where
+  the lips meet in the middle and how wide the slit is. Teeth or tongue that
+  would poke out through the skin anywhere are not drawn there.
 - **Opening it:** the jaw swings about a hinge behind the mouth corners, where
   a dog's jaw joint is (`JAW_HINGE` in `catcam/head3d.py`), as far as your
   lower lip drops, up to `OWN_JAW_MAX`.

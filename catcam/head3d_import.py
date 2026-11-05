@@ -5,9 +5,10 @@ is what lets the head take on the 2D cat's expressions.
 
     uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name> [--own-mouth]
 
---own-mouth keeps the head's own mouth: no teeth, tongue or mouth cavity are
-added (see catcam.mouth3d). The import finds the head's own lower jaw instead and
-cuts it free along the slit between its lips, so it can swing open there.
+--own-mouth keeps the head's own mouth: no lips or mouth cavity are added. The
+import finds the head's own lower jaw instead and cuts it free along the slit
+between its lips, so it can swing open there, with teeth and a tongue inside
+(see catcam.mouth3d).
 """
 
 import argparse
@@ -47,6 +48,7 @@ JAW_SEEDS = [17, 18, 83, 84, 152, 175, 199, 200, 313, 314]
 FACE_SEEDS = [0, 1, 2, 37, 39, 40, 98, 164, 185, 267, 269, 270, 327, 409]
 JAW_FOLD = 0.1
 JAW_SMOOTH = 0.01
+SLIT_FRONT = 0.3  # face widths behind the cut's front: how deep the slit seen between the lips goes
 JAW_REACH = (0.3, 0.5)  # face widths from the lower lip: within the first it all moves, past the second none
 
 DEPTH_VS = """
@@ -373,6 +375,17 @@ def cut_jaw(attributes: dict, faces, margin, reach):
     return out, faces, jaw.astype(np.float32)
 
 
+def find_slit(points, opens, cam: "FrontCamera", face_model):
+    """Where the lips meet: the middle of the slit seen from the front (model) and its
+    width (model units), from the points on the cut (points) where the jaw opens."""
+    q = points[opens] @ cam.rot.T
+    front = q[:, 2] >= q[:, 2].max() - SLIT_FRONT * face_model
+    q, slit = q[front], points[opens][front]
+    width = np.ptp(q[:, 0])
+    middle = np.abs(q[:, 0] - np.median(q[:, 0])) < 0.05 * width
+    return slit[middle][np.argmax(q[middle, 2])], width
+
+
 def import_glb(glb: str, name: str, own_mouth: bool = False):
     import trimesh  # only needed here
 
@@ -397,12 +410,17 @@ def import_glb(glb: str, name: str, own_mouth: bool = False):
     ly = np.clip(points[:, 1].round().astype(int), 0, h - 1)
     landmarks = cam.unproject(points[:, :2], depth[ly, lx])
     faces, normals, uv, jaw = mesh.faces, mesh.vertex_normals, mesh.visual.uv, np.zeros(0, np.float32)
+    slit = {}
     if own_mouth:
-        margin, reach = find_jaw(vertices, faces, landmarks, np.ptp(points[:, 0]) / cam.scale)
+        face_model = np.ptp(points[:, 0]) / cam.scale
+        margin, reach = find_jaw(vertices, faces, landmarks, face_model)
+        n = len(vertices)
         parts, faces, jaw = cut_jaw(
             {"vertices": vertices, "normals": normals, "uv": uv, "photo_px": photo_px}, faces, margin, reach)
         vertices, normals, uv, photo_px = (parts[k] for k in ("vertices", "normals", "uv", "photo_px"))
         normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+        middle, width = find_slit(vertices[n:], jaw[n:] > 0.5, cam, face_model)
+        slit = {"slit_middle": middle.astype("f4"), "slit_width": np.float32(width)}
         print(f"  {np.count_nonzero(jaw > 0.5)} vertices move with the jaw")
 
     eye_index, eye_px, eye_weight = eye_paint(raster, cam, depth, texture.astype(np.float32), sprite, points)
@@ -418,7 +436,7 @@ def import_glb(glb: str, name: str, own_mouth: bool = False):
         photo_px=photo_px.astype("f4"), landmarks=landmarks.astype("f4"),
         cam_rot=cam.rot.astype("f4"), cam_scale=np.float32(cam.scale),
         eye_index=eye_index, eye_px=eye_px.astype("f4"), eye_weight=eye_weight.astype("f4"),
-        own_mouth=own_mouth, jaw_weight=jaw)
+        own_mouth=own_mouth, jaw_weight=jaw, **slit)
     cv2.imwrite(str(texture_file), texture)
     print(f"  {len(vertices)} vertices, {len(eye_index)} eye texels -> {mesh_file.parent}")
 
@@ -428,6 +446,6 @@ if __name__ == "__main__":
     parser.add_argument("glb", help="the head, a .glb with its texture")
     parser.add_argument("name", help="the cat, as in all_cats/<Name>.png")
     parser.add_argument("--own-mouth", action="store_true",
-                        help="keep the head's own mouth: add no teeth or tongue")
+                        help="keep the head's own lips and inside, and cut its own jaw free")
     args = parser.parse_args()
     import_glb(args.glb, args.name, args.own_mouth)
