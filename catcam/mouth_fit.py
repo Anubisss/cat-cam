@@ -1,11 +1,13 @@
 """Where a cat's lips meet, checked against its photo.
 
 The face model's fitted line between the lips can miss the photo's, e.g. land
-on a pouty lower lip. The photo's is a crease: a line darker than the fur just
-above and below it. Where the whole mouth agrees that the fit is clearly off,
-the crease is traced across the mouth, the mouth corners go to where it turns
-(its lowest points on either side), the lips go onto it, and the face around
-the mouth follows with a falloff.
+on a pouty lower lip, or reach past the lips onto the whisker pads. The
+photo's is a crease: a line darker than the fur just above and below it,
+traced across the mouth, with the mouth corners where it turns (its lowest
+points on either side). Where the whole mouth agrees that the fit is clearly
+too high or too low, or both traced corners lie clearly inside the fitted
+ones, the lips go onto the crease and the face around the mouth follows with
+a falloff.
 """
 
 import cv2
@@ -23,6 +25,7 @@ CREASE = 0.012  # a crease is darker than the photo this far above and below it
 SEARCH = (0.05, 0.03)  # checking the fit: how far (up, down) to look for the crease
 BAND = 0.012  # ...averaging columns this wide
 TOLERANCE = 0.015  # a fit this close to the crease is kept
+TOO_WIDE = 0.04  # a fit whose corners reach this much past the crease's on both sides is too wide
 TRACE = (0.3, 0.08)  # tracing: half the width and height of the area searched
 FOLLOW = (0.03, 0.06)  # the face follows the lips: blending radius, falloff
 
@@ -75,13 +78,16 @@ def snap_mouth(sprite: np.ndarray, landmarks: np.ndarray, face_width: float) -> 
     crease = _creases(sprite, face_width)
     misses = _misses(crease, landmarks, face_width)
     miss = float(np.median(misses))
-    if abs(miss) < TOLERANCE * face_width or not (np.sign(misses) == np.sign(miss)).all():
-        return landmarks
+    off = abs(miss) >= TOLERANCE * face_width and (np.sign(misses) == np.sign(miss)).all()
     centre = (landmarks[UPPER_INNER_LIP, :2] + landmarks[LOWER_INNER_LIP, :2]).mean(axis=0) / 2
     xs, ys = trace(crease, centre, face_width)
     middle = np.searchsorted(xs, centre[0])
     left = int(np.argmax(ys[:middle]))  # the corners: where the crease turns, at its lowest
     right = middle + int(np.argmax(ys[middle:]))
+    fitted = landmarks[[UPPER_INNER_LIP[0], UPPER_INNER_LIP[-1]], 0]
+    too_wide = xs[left] - fitted[0] > TOO_WIDE * face_width and fitted[1] - xs[right] > TOO_WIDE * face_width
+    if not (off or too_wide):
+        return landmarks
     seam_x = np.linspace(xs[left], xs[right], len(UPPER_INNER_LIP))
     seam = np.column_stack([seam_x, np.interp(seam_x, xs, ys)])
 

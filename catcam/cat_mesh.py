@@ -39,6 +39,7 @@ LIP_SEAM = 0.0015  # half the gap between the lips of the closed mouth
 # around the mouth follows with a falloff (in mouth half-widths: fully inside
 # MOUTH_GROW[0], not at all beyond [1]; half as far up and down).
 MOUTH_MIN = 0.33
+MOUTH_MAX_GROW = 1.3  # enlarged by at most this, more would distort the face around it
 MOUTH_GROW = (1.3, 2.5)
 # Framing: ear tips and chin as fractions of the screen height.
 TOP_MARGIN, CHIN_LINE = 0.04, 0.93  # room above for perked ears
@@ -274,7 +275,7 @@ def _bigger_mouth(points: np.ndarray, face: np.ndarray, face_width: float) -> np
     """The points with the mouth region scaled up to at least MOUTH_MIN wide."""
     corners = face[[78, 308]]
     width = np.linalg.norm(corners[0, :2] - corners[1, :2])
-    grow = MOUTH_MIN * face_width / width
+    grow = min(MOUTH_MIN * face_width / width, MOUTH_MAX_GROW)
     if grow <= 1:
         return points
     centre = (corners.mean(axis=0) + face[[13, 14]].mean(axis=0)) / 2

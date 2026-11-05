@@ -18,6 +18,10 @@ def test_lips_snap_to_the_photos_crease_only_when_clearly_off(real_cats):
     for cat in real_cats:
         width = np.ptp(cat.points[:, 0])
         snapped = snap_mouth(cat.sprite, cat.points, width)
+        if cat.name == "Mate":  # fitted past his lips onto the whisker pads
+            assert np.ptp(snapped[[78, 308], 0]) < np.ptp(cat.points[[78, 308], 0]) - 0.1 * width
+            np.testing.assert_allclose(snapped[[10, 33, 263]], cat.points[[10, 33, 263]])
+            continue
         if cat.name != "Balint":
             np.testing.assert_array_equal(snapped, cat.points, err_msg=cat.name)
             continue

@@ -128,10 +128,13 @@ def test_teeth_keep_their_size_as_the_mouth_opens(meshes):
 
 
 def test_small_mouths_are_enlarged(meshes):
-    from catcam.cat_mesh import MOUTH_MIN
+    from catcam.cat_mesh import MOUTH_MAX_GROW, MOUTH_MIN
+    from catcam.mouth_fit import snap_mouth
 
     for cat, mesh in meshes:
-        assert mesh.mouth_size >= MOUTH_MIN - 1e-6, cat.name
+        fitted = snap_mouth(cat.sprite, cat.points, mesh.face_width)
+        natural = np.linalg.norm(fitted[78, :2] - fitted[308, :2]) / mesh.face_width
+        assert mesh.mouth_size >= min(MOUTH_MIN, MOUTH_MAX_GROW * natural) - 1e-6, cat.name
         # Away from the mouth the cat is unchanged; the nose barely moves.
         np.testing.assert_allclose(mesh.rest[[10, 33, 263], :2], cat.points[[10, 33, 263], :2])
         np.testing.assert_allclose(mesh.rest[1, :2], cat.points[1, :2], atol=0.01 * mesh.face_width)
