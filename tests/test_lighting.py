@@ -27,7 +27,7 @@ def test_the_side_turning_away_darkens(real_cats):
 
     renderer = Renderer((320, 180))
     for cat in real_cats:
-        mesh = CatMesh(renderer, cat.sprite, cat.points, (0, 0, 0))
+        mesh = CatMesh(renderer, cat.sprite, cat.points, (0, 0, 0), snap=not cat.mouth_set)
         left = mesh.rest[:, 0] < mesh.pivot[0]
         sides = []
         for yaw in (0.3, -0.3):

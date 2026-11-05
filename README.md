@@ -153,6 +153,10 @@ uv run cat-cam --camera 1   # use another webcam (e.g. if your iPhone camera ope
    the left and the right paw on the right, separated by a vertical purple
    line. `prepare` cuts them out too; a cat without paw photos gets drawn
    paws in its colours.
+   If the mouth ends up in the wrong place (it can on faces that aren't
+   cat-like, such as a dog's), write where the lips meet in
+   `all_cats/<Name>Mouth.txt` and prepare it again with `--force`; see
+   [docs/3d-heads.md](docs/3d-heads.md#how-the-eyes-and-mouth-work).
 3. Run `uv run cat-cam`. The new cat appears in the picker.
 4. Optionally give it a 3D head, generated from the same portrait on your
    Mac: see [docs/3d-heads.md](docs/3d-heads.md).

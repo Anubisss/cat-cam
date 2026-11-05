@@ -17,6 +17,7 @@ class CatAssets:
     points: np.ndarray  # (478, 3) face landmarks in sprite px (z uses the x scale)
     background: np.ndarray  # (3,) BGR colour of the portrait's backdrop
     paws: dict  # {(view, hand): BGRA paw photo}, see catcam.paw_photos; empty if none
+    mouth_set: bool = False  # lips placed by hand (all_cats/<Name>Mouth.txt), not to be corrected
 
 
 def available(assets: Path = ASSETS) -> list[str]:
@@ -51,10 +52,11 @@ def load(name: str, assets: Path = ASSETS) -> CatAssets:
     with np.load(folder / "face.npz") as face:
         points = face["points"].astype(np.float64)
         background = face["background"].astype(np.uint8)
+        mouth_set = bool(face["mouth_set"]) if "mouth_set" in face else False
     if points.shape != (478, 3):
         raise ValueError(f"{folder / 'face.npz'} has {points.shape} landmarks, expected (478, 3)")
     paws = {}
     for key, path in paw_files(name, assets).items():
         if path.is_file():
             paws[key] = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    return CatAssets(name, sprite, points, background, paws)
+    return CatAssets(name, sprite, points, background, paws, mouth_set)

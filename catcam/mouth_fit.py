@@ -29,6 +29,8 @@ CENTER_TOLERANCE = 0.01  # the middle matters most: a lower lip can hide a centr
 TOO_WIDE = 0.04  # a fit whose corners reach this much past the crease's on both sides is too wide
 TRACE = (0.3, 0.08)  # tracing: half the width and height of the area searched
 FOLLOW = (0.03, 0.06)  # the face follows the lips: blending radius, falloff
+PLACE_FADE = 0.1  # a hand-placed mouth line's pull fades out this far past its corners
+NOSE_BOTTOM, CHIN = 2, 152  # landmarks: the stretch to a hand-placed line ends at these
 
 
 def _creases(sprite: np.ndarray, face_width: float) -> np.ndarray:
@@ -97,8 +99,44 @@ def snap_mouth(sprite: np.ndarray, landmarks: np.ndarray, face_width: float) -> 
     too_wide = xs[left] - fitted[0] > TOO_WIDE * face_width and fitted[1] - xs[right] > TOO_WIDE * face_width
     if not (off or too_wide):
         return landmarks
-    seam_x = np.linspace(xs[left], xs[right], len(UPPER_INNER_LIP))
-    seam = np.column_stack([seam_x, np.interp(seam_x, xs, ys)])
+    return _onto_line(landmarks, np.column_stack([xs[left:right + 1], ys[left:right + 1]]), face_width)
+
+
+def place_mouth(landmarks: np.ndarray, line: np.ndarray, face_width: float) -> np.ndarray:
+    """landmarks with the lips closed along line ((n, 2) px from one mouth corner to
+    the other), for faces the fit and the crease search can't place, like a dog's
+    smile, whose corners are its highest points rather than its lowest.
+
+    The line can be far from the fitted lips, so the face between the nose and the
+    chin is stretched to it column by column, keeping every point on its side of
+    the lips: what moves with your lower lip stays below the new line."""
+    line = line[np.argsort(line[:, 0])]
+    lips = UPPER_INNER_LIP + LOWER_INNER_LIP
+    old = (landmarks[UPPER_INNER_LIP, :2] + landmarks[LOWER_INNER_LIP, :2]) / 2
+    old = old[np.argsort(old[:, 0])]
+    top, bottom = landmarks[NOSE_BOTTOM, 1], landmarks[CHIN, 1]
+    out = landmarks.copy()
+    x, y = landmarks[:, 0], landmarks[:, 1]
+    was, now = np.interp(x, old[:, 0], old[:, 1]), np.interp(x, line[:, 0], line[:, 1])
+    # Fade the stretch out past the mouth corners.
+    beyond = np.maximum(line[0, 0] - x, x - line[-1, 0]).clip(0)
+    now = was + (now - was) * np.exp(-((beyond / (PLACE_FADE * face_width)) ** 2))
+    above = (y > top) & (y <= was)
+    below = (y > was) & (y < bottom)
+    up, down = np.maximum(was - top, 1e-6), np.maximum(bottom - was, 1e-6)
+    out[above, 1] = top + (y - top)[above] * ((now - top) / up)[above]
+    out[below, 1] = bottom - (bottom - y)[below] * ((bottom - now) / down)[below]
+    seam_x = np.linspace(line[0, 0], line[-1, 0], len(UPPER_INNER_LIP))
+    seam = np.column_stack([seam_x, np.interp(seam_x, line[:, 0], line[:, 1])])
+    out[lips, :2] = np.vstack([seam, seam])
+    return out
+
+
+def _onto_line(landmarks: np.ndarray, line: np.ndarray, face_width: float) -> np.ndarray:
+    """landmarks with the lips closed along line ((n, 2) px, left to right) and the
+    face around the mouth following them."""
+    seam_x = np.linspace(line[0, 0], line[-1, 0], len(UPPER_INNER_LIP))
+    seam = np.column_stack([seam_x, np.interp(seam_x, line[:, 0], line[:, 1])])
 
     lips = UPPER_INNER_LIP + LOWER_INNER_LIP
     moves = np.vstack([seam, seam]) - landmarks[lips, :2]

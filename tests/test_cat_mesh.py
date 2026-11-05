@@ -22,7 +22,8 @@ def renderer():
 
 @pytest.fixture(scope="module")
 def meshes(renderer, real_cats):
-    return [(cat, CatMesh(renderer, cat.sprite, cat.points, HOLE)) for cat in real_cats]
+    return [(cat, CatMesh(renderer, cat.sprite, cat.points, HOLE, snap=not cat.mouth_set))
+            for cat in real_cats]
 
 
 def _holes_in_face(mesh, image, offsets, rotation):

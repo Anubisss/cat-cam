@@ -3,7 +3,9 @@
 For every all_cats/<Name>.png this cuts the cat out of its background, finds
 its face landmarks and writes assets/cats/<Name>/cutout.png and face.npz.
 Paw photos next to it (<Name>PawsFront.png, <Name>PawsBack.png) become its
-paw sprites (see catcam.paw_photos). Already prepared cats and paws are
+paw sprites (see catcam.paw_photos). A <Name>Mouth.txt next to it puts the
+lips where the face fit can't find them: one "x, y" per line, portrait px,
+along the line where the lips meet from one mouth corner to the other. Already prepared cats and paws are
 skipped unless --force is given.
 
 Run after adding or replacing a portrait:
@@ -26,6 +28,7 @@ from catcam.landmark_fit import (
     fit_face,
     head_bbox,
 )
+from catcam.mouth_fit import place_mouth
 from catcam.paths import ASSETS, FACE_MIRROR, PORTRAITS
 
 TEXTURE_SIZE = 1024  # longest side of the stored cutout
@@ -70,13 +73,14 @@ def background_color(bgr: np.ndarray) -> np.ndarray:
     return np.median(border, axis=0).astype(np.uint8)
 
 
-def save(name: str, cutout: np.ndarray, points: np.ndarray, background: np.ndarray):
+def save(name: str, cutout: np.ndarray, points: np.ndarray, background: np.ndarray, mouth_set: bool):
     scale = TEXTURE_SIZE / max(cutout.shape[:2])
     size = (round(cutout.shape[1] * scale), round(cutout.shape[0] * scale))
     out = ASSETS / name
     out.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out / "cutout.png"), cv2.resize(cutout, size, interpolation=cv2.INTER_AREA))
-    np.savez(out / "face.npz", points=(points * scale).astype(np.float32), background=background)
+    np.savez(out / "face.npz", points=(points * scale).astype(np.float32), background=background,
+             mouth_set=mouth_set)
 
 
 def main():
@@ -159,7 +163,12 @@ def main():
             print(f"  {name}: {e}, skipped.")
             failed.append(name)
             continue
-        save(name, cutouts[name], points, background_color(images[name]))
+        mouth = PORTRAITS / f"{name}Mouth.txt"
+        if mouth.is_file():
+            points[:, :2] = place_mouth(points, np.loadtxt(mouth, delimiter=",", ndmin=2),
+                                        np.ptp(points[:, 0]))[:, :2]
+            print(f"  lips placed along {mouth.name}")
+        save(name, cutouts[name], points, background_color(images[name]), mouth.is_file())
         print(f"  saved {ASSETS / name}")
     if failed:
         sys.exit(f"Failed: {', '.join(failed)}")

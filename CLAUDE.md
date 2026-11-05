@@ -69,7 +69,8 @@ an image and check them, as the tests only catch holes and gross errors.
 3. Check the cat: `uv run cat-cam --check`, then render it at rest, with the
    mouth open, eyes closed and head turned, and look at the mouth closely.
    `catcam/mouth_fit.py` corrects lips that were fitted onto the wrong line;
-   if the mouth still looks off, that is where to look.
+   if the mouth still looks off, that is where to look, or place the lips by
+   hand with an `all_cats/<Name>Mouth.txt` (see `catcam/prepare.py`).
 4. Add the name to `test_shipped_cats` in `tests/test_cats.py`, regenerate
    `docs/picker.jpg` if the picker changed, and commit the pictures in
    `all_cats/` together with `assets/cats/<Name>/`.

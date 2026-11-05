@@ -16,6 +16,8 @@ def test_traces_a_dark_crease():
 
 def test_lips_snap_to_the_photos_crease_only_when_clearly_off(real_cats):
     for cat in real_cats:
+        if cat.mouth_set:  # placed by hand (all_cats/<Name>Mouth.txt), never snapped
+            continue
         width = np.ptp(cat.points[:, 0])
         snapped = snap_mouth(cat.sprite, cat.points, width)
         if cat.name == "Mate":  # fitted past his lips onto the whisker pads

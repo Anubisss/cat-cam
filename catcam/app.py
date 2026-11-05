@@ -100,7 +100,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
     cats = []
     for name in names:
         a = cat_assets.load(name)
-        mesh = CatMesh(renderer, a.sprite, a.points, a.background)
+        mesh = CatMesh(renderer, a.sprite, a.points, a.background, snap=not a.mouth_set)
         cats.append(Cat(
             name=name,
             points=a.points,

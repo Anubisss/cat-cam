@@ -404,8 +404,10 @@ class Renderer:
 
 
 class CatMesh:
-    def __init__(self, renderer: Renderer, sprite: np.ndarray, landmarks: np.ndarray, bg_color):
-        """sprite: BGRA, landmarks: (478, 3) sprite px with depth, bg_color: BGR."""
+    def __init__(self, renderer: Renderer, sprite: np.ndarray, landmarks: np.ndarray, bg_color,
+                 snap: bool = True):
+        """sprite: BGRA, landmarks: (478, 3) sprite px with depth, bg_color: BGR; snap:
+        correct the lips onto the photo's crease (off when they were placed by hand)."""
         self.renderer = renderer
         self.out_w, self.out_h = renderer.out_w, renderer.out_h
         self.bg = tuple(np.asarray(bg_color) / 255) + (1.0,)
@@ -417,7 +419,8 @@ class CatMesh:
         # the photo at the original landmarks so that fitting does not pull
         # the lower lip's texture up onto the seam.
         texture_face = landmarks[:, :2].copy()
-        landmarks = snap_mouth(sprite, landmarks, self.face_width)
+        if snap:
+            landmarks = snap_mouth(sprite, landmarks, self.face_width)
         face = _closed_mouth(landmarks, self.face_width)
         outline_xy = _outline(sprite[..., 3])
         outline = np.column_stack([outline_xy, _outline_depth(outline_xy, face, self.face_width)])
