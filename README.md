@@ -8,7 +8,8 @@ its own mouth with yours, its jaw swinging down to show teeth and tongue, while
 the side of its head that turns away from the light falls into shadow. Your
 hands become its paws, real 3D ones in its own colours (a dog's for Woofgang),
 that turn with your hands and curl toe by toe with your fingers: the toe beans
-when you show your palm, the fur when you show the back of your hand. When you
+when you show your palm, the fur when you show the back of your hand. Or keep
+your own hands, cut out of the webcam picture and washed in its fur colours. When you
 talk, the call hears your animal instead of your voice: Woofgang barks, and
 every cat has a voice of its own, from Grinbert's chirpy trills to
 Grumbledore's slow old grumbles, all real animals. When you sit still, your animal
@@ -16,7 +17,8 @@ breathes and looks around on its own. And you can put any picture or video
 behind it.
 
 Your own face is never sent anywhere. Only the drawn cat goes out to the
-virtual camera, and everything runs locally on your computer.
+virtual camera (with your hands, cut out of the picture, if you choose "Real
+hands"), and everything runs locally on your computer.
 
 ![The cat picker](docs/picker.jpg)
 
@@ -127,6 +129,14 @@ Raise your hands into the camera's view for paws. Turn a hand around to
 show the other side of the paw; tilt or turn it and the paw does too. Each toe
 follows one of your fingers: curl a finger and its toe curls in, make a fist
 and they all do.
+**Paws** in the top left corner of the window (or `h`) goes from the
+**3D paws** to the **photo paws** (or drawn ones, for a cat without paw photos)
+to **Real hands** and round again: your own hands, cut out of the webcam picture
+(nothing else of you: not your face, hair or clothes) and drawn where the paws
+would be, as big next to the animal as they are next to your face, with a light
+wash of its fur colours and a fine grain of fur. They are still clearly your
+hands. Bare forearms show a little way down, sleeves don't. In a dim room the
+cut-out gets patchy, so light your hands well.
 Turn on **Tail** in the top left corner of the window (or press `t`) for the
 cat's tail: while only one of your hands is in view, it lifts the tip of
 the tail instead of being a paw, and the rest of the tail rises from below,
@@ -169,6 +179,7 @@ without it (not a Mac) the keys do nothing.
 | `c`        | open the cat picker (the call keeps showing your cat)     |
 | `Esc`      | close the picker                                          |
 | `t`        | tail on/off (same as the Tail switch)                     |
+| `h`        | paws: 3D paws, photo paws or your real hands, in turn     |
 | `d`        | 3D head on/off, for cats that have one                    |
 | `b`        | background on/off (on asks for a picture or video)        |
 | `v`        | voice on/off: the animal's sounds, or your own voice      |
@@ -222,8 +233,9 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
    `all_cats/<Name>PawsBack.png` (the soles). In each, put the left paw on
    the left and the right paw on the right, separated by a vertical purple
    line. `prepare` cuts them out too; a cat without paw photos gets drawn
-   paws in its colours. These photo paws only show if the 3D paws
-   (`assets/paws/`) are missing; the tail always takes its skin from them.
+   paws in its colours. These photo paws show when **Paws** is set to
+   them, or if the 3D paws (`assets/paws/`) are missing; the tail always
+   takes its skin from them.
    If the mouth ends up in the wrong place (it can on faces that aren't
    cat-like, such as a dog's), write where the lips meet in
    `all_cats/<Name>Mouth.txt` and prepare it again with `--force`; see
@@ -252,6 +264,8 @@ These constants sit at the top of their files:
 | `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
 | `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
+| `WASH`, `GRAIN`, `MAX_SCALE` | `catcam/real_hands.py` | how far your real hands take on the animal's fur colour, how strong its fur grain is, and how much bigger than in the webcam picture they may be drawn |
+| `SKIN`, `REACH`, `FOREARM` | `catcam/real_hands.py` | how sure the segmenter must be that a pixel is skin, and how far round your hand and down your forearm the cut-out reaches |
 | `HAND_DEPTH` | `catcam/paws.py` | how much of your hand's tilt toward or away from the camera the 3D paws copy |
 | `CURL_ANGLE`, `RAISE` | `catcam/paw3d.py` | how far a toe curls with its finger, and how much taller a finger raised out of a fist stands |
 | `SOCK_SHARE`, `TABBY`, `AMBIENT` | `catcam/paw3d.py` | how much lighter a paw is than the arm, how finely patterned fur must be for stripes, and how flat the paws' light is |
@@ -287,7 +301,12 @@ These constants sit at the top of their files:
    pads from its nose. A tail (`catcam/tail.py`) is
    a chain of points whose tip is pulled toward your hand; the rest is
    simulated with momentum, even bending and a bend limit, and wrapped in the
-   skin of the cat's paw photo.
+   skin of the cat's paw photo. With **Real hands**, MediaPipe's multiclass
+   selfie segmenter tells the skin of your hands and arms from your face,
+   hair, clothes and background, on its own thread alongside the trackers;
+   only that skin near a tracked hand is cut out, given a wash of the
+   animal's fur colours and drawn where the paw would be
+   (`catcam/real_hands.py`).
 6. A 3D head (`catcam/head3d.py`) is tied to the photo cat's face points, so
    it takes on the same expressions. One with its own mouth, like all of these,
    has its lower jaw found and cut free when it is imported: it grows over the
@@ -344,6 +363,7 @@ catcam/
   reactions.py     emoji reactions on the number keys
   paws.py          paws: following your hands, and the photo paws
   paw3d.py         3D paws, coloured like each animal (models made by tools/paw_model.py)
+  real_hands.py    your real hands cut out of the webcam picture, tinted like the animal
   tail.py          the tail: a chain of points simulated like a real tail
   paw_photos.py    turns paw photos into paw sprites (used by prepare)
   prepare.py       turns all_cats/*.png into assets/cats/*
@@ -362,11 +382,15 @@ tools/             3D helpers: TRELLIS.2 install and fixes, render sheets of hea
                    tracking_eval.py measures face tracking on recorded webcam clips;
                    frame_bench.py measures frame times, every animal, no one at the camera;
                    cat_voices.py makes the animals' voices from CC0 recordings
-models/            MediaPipe face and hand models
+models/            MediaPipe face and hand models, and the selfie segmenter
 packaging/         the standalone macOS app: PyInstaller spec, icon, build script
 ```
 
-The MediaPipe models in `models/` are by Google and licensed under Apache 2.0.
+The MediaPipe models in `models/` are by Google and licensed under Apache 2.0:
+the face and hand landmarkers, and the multiclass selfie segmenter
+(`selfie_multiclass_256x256.tflite`, from
+`https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/`,
+see its [model card](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Multiclass%20Segmentation.pdf)).
 The animals' voices (`assets/cats/<Name>/voice/*.ogg`) are made by
 `tools/cat_voices.py` from these Freesound recordings, all CC0 (public
 domain), cut into single meows (or barks) and otherwise left as recorded:

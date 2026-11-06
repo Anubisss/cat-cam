@@ -50,6 +50,10 @@ USE
 - Raise your hands into view for paws. Turn on "Tail" in the top left corner
   of the Cat Cam window (or press T): then one hand on its own lifts the
   cat's tail, and both hands are two paws.
+- Click "Paws" (or press H) to go from 3D paws to photo paws to "Real
+  hands" and round again. Real hands are your own hands, cut out of the
+  camera picture and tinted like your animal's fur; the call sees them, but
+  nothing else of you. Light your hands well for a clean cut-out.
 - "3D head" (or D) is on to begin with: a real 3D head. Turn it off for the
   flat photo head.
 - Turn on "Background" (or press B) and pick a picture or video to put

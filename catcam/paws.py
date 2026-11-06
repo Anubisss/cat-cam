@@ -268,6 +268,12 @@ def finger_curls(pts: np.ndarray) -> np.ndarray:
     return np.clip((reach - CLOSED_RANGE[0]) / (CLOSED_RANGE[1] - CLOSED_RANGE[0]), 0, 1)
 
 
+def palm_of(pts: np.ndarray) -> np.ndarray:
+    """The middle of the palm (2,) from a hand's landmarks ((21, 2+) px): where a paw goes."""
+    knuckles = pts[[INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP], :2].mean(axis=0)
+    return 0.6 * knuckles + 0.4 * pts[WRIST, :2]
+
+
 def palm_facing(toward: float) -> float:
     """palm_toward as 0 (show the top of the paw) .. 1 (show the sole)."""
     t = np.clip((toward - PALM_RANGE[0]) / (PALM_RANGE[1] - PALM_RANGE[0]), 0, 1)
@@ -310,7 +316,10 @@ class LongToe:
 class Paws:
     def __init__(self, out_width: int):
         self.out_w = out_width
-        self.slots = {}  # handedness -> {"filter", "params", "presence", "long_toe"}
+        # handedness -> {"filter", "params", "presence", "long_toe", "detection"}; "detection":
+        # the index of the hand tracker's hand it was this frame, None if it wasn't seen.
+        self.slots = {}
+        self.scale = 1.0  # the animal's face width over yours: how much bigger a paw is than your hand
 
     def update(self, hands, user_face: np.ndarray | None, cam_size, dt: float,
                cat_face_center: np.ndarray, cat_face_width: float):
@@ -323,6 +332,7 @@ class Paws:
         else:  # face never seen yet: assume a typical webcam framing
             face_center = np.array([cam_w / 2, cam_h * 0.4])
             face_width = cam_w * DEFAULT_FACE_WIDTH
+        self.scale = cat_face_width / max(face_width, 1.0)
         detections = []
         for landmarks, handedness in zip(hands.hand_landmarks, hands.handedness):
             # z (depth, the tracker's guess) uses the x scale, as MediaPipe defines it.
@@ -332,8 +342,7 @@ class Paws:
             up /= np.linalg.norm(up) + 1e-6
             across = pts[INDEX_MCP] - pts[PINKY_MCP]
             across /= np.linalg.norm(across) + 1e-6
-            knuckles = pts[[INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP], :2].mean(axis=0)
-            palm = 0.6 * knuckles + 0.4 * pts[WRIST, :2]
+            palm = palm_of(pts)
             palm_width = np.linalg.norm(pts[INDEX_MCP, :2] - pts[PINKY_MCP, :2])
             label = handedness[0].category_name
             # Placed by where the hand is relative to your face in the camera
@@ -341,21 +350,25 @@ class Paws:
             # sized relative to your face, like a real paw next to the cat's.
             target = np.array([
                 *(cat_face_center + (palm - face_center) * (self.out_w / cam_w)),
-                palm_width * (cat_face_width / face_width) * PAW_SIZE,
+                palm_width * self.scale * PAW_SIZE,
                 *up,
                 *across,
                 1.0 if label == "Right" else -1.0,  # the detected handedness, before any relabelling
                 *finger_curls(pts[:, :2]),  # index to little finger
             ])
             detections.append((label, target))
+        index = {id(target): i for i, (_, target) in enumerate(detections)}
         seen = set()
         for name, target in self._label(detections):
             slot = self.slots.setdefault(
                 name, {"filter": OneEuroFilter(PAW_MIN_CUTOFF, PAW_BETA), "presence": 0.0}
             )
             slot["params"] = slot["filter"](target, dt)
+            slot["detection"] = index[id(target)]
             seen.add(name)
         for name, slot in self.slots.items():
+            if name not in seen:
+                slot["detection"] = None
             present = 1.0 if name in seen else 0.0
             slot["presence"] += FADE_RATE * (present - slot["presence"])
             slot.setdefault("long_toe", LongToe()).update(slot["params"][10:14] if name in seen else None, dt)

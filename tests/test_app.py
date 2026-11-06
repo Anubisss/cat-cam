@@ -222,12 +222,20 @@ def test_switch_keys_are_all_different():
     assert len(keys) == len(set(keys))
 
 
+def test_switch_keys_leave_the_shortcuts_alone():
+    from catcam.app import TOGGLES
+    from catcam.fx import load
+
+    keys = {key for _, _, key in TOGGLES} | {"c", "n", "q"}
+    assert not keys & set(load())
+
+
 def test_preview_shows_the_voice_switch():
     from types import SimpleNamespace
 
     out = np.zeros((720, 1280, 3), np.uint8)
     cat = SimpleNamespace(name="Test")
-    assert sum(w for _, _, w, _ in toggle_rects(True).values()) < SIZE[0] - 100  # all fit in the window
+    assert sum(w for _, _, w, _ in toggle_rects(True).values()) < SIZE[0] - 2 * app.MARGIN  # all fit
     x, y, w, h = toggle_rects(False)["voice"]
     area = np.s_[y + 8:y + h - 8, x + 10:x + w - 10]
     off, on = preview(out, cat, False, voice=False)[area], preview(out, cat, False, voice=True)[area]
@@ -237,15 +245,14 @@ def test_preview_shows_the_voice_switch():
 
 @pytest.mark.parametrize("head3d", [True, False])
 def test_the_controls_keep_to_the_corners_and_never_overlap(monkeypatch, head3d):
-    """With the longest name, every voice setup note, "Looking for your face", and
-    room for a fifth switch, nothing covers anything else or leaves the window."""
+    """With the longest name, the widest paw mode, every voice setup note and "Looking
+    for your face", nothing covers anything else or leaves the window."""
     from catcam import blackhole
     from catcam.paths import ASSETS
 
-    monkeypatch.setattr(app, "TOGGLES", app.TOGGLES + (("more", "Another", "m"),))
     names = [p.name for p in ASSETS.iterdir() if p.is_dir()]
     longest = max(names, key=lambda name: app.glass.text_width(name, app.NAME, 600, "rounded"))
-    states = {"tail": False, "background": False, "voice": True, "more": True} | (
+    states = {"tail": False, "paws": "hands", "background": False, "voice": True} | (
         {"head3d": True} if head3d else {})
     width, height = SIZE
     view = np.zeros((height, width, 3), np.uint8)
@@ -264,7 +271,7 @@ def test_the_controls_keep_to_the_corners_and_never_overlap(monkeypatch, head3d)
 
 
 def test_no_head3d_switch_without_a_3d_head():
-    assert set(toggle_rects(False)) == {"tail", "background", "voice"}
+    assert set(toggle_rects(False)) == {"tail", "paws", "background", "voice"}
     controls, state = _controls(), _State()
     controls.handle(ord("1"), state)
     controls.has_head3d = False
@@ -377,3 +384,114 @@ def test_tracker_hands_on_the_newest_frame_then_the_webcam_failing(monkeypatch):
     with pytest.raises(SystemExit):  # raised on the main thread, as the webcam stopped
         tracker.next()
     tracker.stop()
+
+
+def test_paws_choice_by_click_or_key():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    assert controls.paw_mode() == "3d"  # 3D paws to begin with
+    controls.handle(ord("h"), state)
+    assert controls.paw_mode() == "photo"
+    controls.handle(ord("h"), state)
+    assert controls.paw_mode() == "hands"
+    controls.handle(ord("h"), state)
+    assert controls.paw_mode() == "3d"  # round again
+    controls.mouse(4, *_centre("paws"), 0, None)  # a click goes on to the next, too
+    controls.handle(-1, state)
+    assert controls.paw_mode() == "photo" and not controls.tail
+    controls.handle(ord("c"), state)  # the choice stays for the next cat
+    controls.handle(ord("2"), state)
+    assert controls.paw_mode() == "photo"
+
+
+def test_paws_choice_without_3d_paws():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    controls.has_paw3d = False
+    assert controls.paw_mode() == "photo"  # the photo paws stand in
+    controls.handle(ord("h"), state)
+    assert controls.paw_mode() == "hands"
+    controls.handle(ord("h"), state)
+    assert controls.paw_mode() == "photo"
+    controls.has_paw3d = True
+    controls.handle(ord("h"), state)
+    assert controls.paw_mode() == "hands"
+
+
+def test_preview_shows_the_paws_choice():
+    from types import SimpleNamespace
+
+    out = np.zeros((720, 1280, 3), np.uint8)
+    cat = SimpleNamespace(name="Test")
+    x, y, w, h = toggle_rects(True)["paws"]
+    area = np.s_[y + 8:y + h - 8, x + 10:x + w - 10]
+    views = [preview(out, cat, False, paw_mode=mode)[area].astype(int) for mode in ("3d", "photo", "hands")]
+    assert all(np.abs(a - b).sum() > 0 for a, b in zip(views, views[1:] + views[:1]))  # each looks different
+    two = preview(out, cat, False, paw_mode="photo", paw3d=False)[area].astype(int)
+    assert np.abs(two - views[1]).sum() > 0  # without 3D paws, two dots
+
+
+@pytest.mark.gl
+def test_real_hands_take_the_place_of_paws_and_leave_the_tail_hand_out(real_cats):
+    from catcam.app import FaceState, load_cats, render
+    from catcam.cat_mesh import Renderer
+    from catcam.paws import Paws
+    from catcam.real_hands import Cut, RealHands
+    from catcam.tail import Tail
+
+    cat = next(c for c in load_cats(Renderer((1280, 720))) if c.name == "Woofgang")
+    paws = Paws(1280)
+    params = np.array([1100, 500, 200, 0, -1, 0, -1, 0, 0, 1, 0, 0, 0, 0])
+    paws.slots = {"Right": {"presence": 1.0, "params": params, "detection": 0}}
+    hand = np.zeros((80, 60, 4), np.uint8)
+    hand[...] = (0, 0, 255, 255)  # a red block of a hand
+    real = RealHands()
+    real.update([Cut(hand, (300, 200), np.array([330.0, 240.0]))], paws.slots)
+    tail = Tail((1280, 720))
+    plain = render(cat, FaceState(), paws, tail, None, paw_mode="hands")  # no cut-outs given: no hands
+    shown = render(cat, FaceState(), paws, tail, None, paw_mode="hands", real_hands=real)
+    lifting = render(cat, FaceState(), paws, tail, "Right", paw_mode="hands", real_hands=real)
+    assert (shown[500, 1100] == (0, 0, 255)).all()  # the palm lands where the paw would
+    assert not (plain[500, 1100] == (0, 0, 255)).all()
+    np.testing.assert_array_equal(lifting[450:550, 1050:1150], plain[450:550, 1050:1150])
+    photo = render(cat, FaceState(), paws, tail, None, paw_mode="photo")
+    paw_3d = render(cat, FaceState(), paws, tail, None, paw_mode="3d")
+    corner = np.s_[400:600, 1000:1200]
+    assert np.abs(photo[corner].astype(int) - paw_3d[corner]).mean() > 5  # two different paws
+
+
+class _Segmenter:
+    """Finds skin everywhere, at once; counts the frames it was given."""
+
+    def __init__(self):
+        self.started, self.closed = 0, False
+
+    def start(self, frame, timestamp):
+        from concurrent.futures import Future
+
+        self.started += 1
+        done = Future()
+        done.set_result(np.ones(frame.shape[:2], np.float32))
+        return done
+
+    def close(self):
+        self.closed = True
+
+
+def test_tracker_cuts_hands_out_only_while_asked(monkeypatch):
+    monkeypatch.setattr(app, "FIRST_FRAME_TIMEOUT", 0.2)
+    monkeypatch.setattr(app, "WEBCAM_TIMEOUT", 0.2)
+    for colours in (None, "the animal's colours"):
+        segmenter = _Segmenter()
+        tracker = Tracker(_Webcam(3), (_Landmarker(), _Landmarker()), segmenter)
+        tracker.cut = lambda frame, skin, hands, colours: [(int(frame[0, 0, 0]), skin.result().shape, hands,
+                                                            colours)]
+        tracker.cut_for = colours
+        tracker.start()._thread.join(timeout=5)
+        tracked = tracker.next()
+        if colours is None:
+            assert tracked.cuts is None and segmenter.started == 0
+        else:
+            assert tracked.cuts == [(2, (4, 6), 2, colours)] and segmenter.started == 3
+        tracker.stop()
+        assert segmenter.closed

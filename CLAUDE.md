@@ -47,8 +47,10 @@ in their vertex shader, and blinks repaint only the texels near the lids.
   Euro filter. `tools/tracking_eval.py` replays recorded webcam clips through
   the tracking and measures jitter, lag, blinks and dropouts: run it before and
   after changing any smoothing (keep the clips out of git, they are faces).
-- `catcam/paws.py`: paws following your hands (and the photo paws, used
-  when there is no 3D paw). `paw3d.py`: the 3D paws (`assets/paws/cat.npz`,
+- `catcam/paws.py`: paws following your hands (and the photo paws, chosen
+  with the Paws switch or used when there is no 3D paw). `real_hands.py`: the
+  "Real hands" choice, your hands cut out of the webcam picture by the selfie
+  segmenter on the tracker's thread and tinted like the animal. `paw3d.py`: the 3D paws (`assets/paws/cat.npz`,
   `dog.npz`), coloured from each animal's portrait; a cat whose 3D head says
   `animal = dog` gets the dog's. `tools/paw_model.py` makes them from a
   generated `.glb` (finds the pads, rigs the toes, thins the mesh):

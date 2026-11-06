@@ -2,13 +2,16 @@
 
 Pick a cat, then it copies you live: it turns, nods and tilts with your head,
 copies your whole face (brows, eyes, cheeks, lips, jaw) and your hands become
-paws. Only the rendered cat goes out to the virtual camera; no webcam pixels
-are ever sent, so your face is never visible.
+paws (3D or photo ones), or stay your own hands, tinted like its fur. Only the
+rendered cat goes out to the virtual camera, and in the "Hands" mode your hands
+cut out of the webcam picture; no other webcam pixels are ever sent, so your
+face is never visible.
 
 Run:  uv run cat-cam      then pick "OBS Virtual Camera" in Zoom.
       uv run cat-cam --camera 1   to use another webcam.
 Keys in the preview window: c = change cat, n = "this is my neutral face"
-(recalibrate), q = quit.
+(recalibrate), q = quit; the switches' keys are shown next to them (h: 3D paws,
+photo paws or your real hands).
 """
 
 import argparse
@@ -18,6 +21,7 @@ import sys
 import threading
 import time
 import traceback
+from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
@@ -48,10 +52,12 @@ from catcam.head_pose import (
 )
 from catcam.idle import Idle
 from catcam.paths import FACE_MODEL, HAND_MODEL, LOG_FILE
+from catcam.paw3d import PawColours, paw_colours
 from catcam.paws import Paws, paw_set, paw_style
 from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker
 from catcam.reactions import Reactions, reaction_for
+from catcam.real_hands import RealHands, Segmenter, cut_all
 from catcam.tail import Tail, TailHand, TailSkin, tail_skin
 from catcam.voice import Sounds, VirtualMic, Voice
 
@@ -62,9 +68,14 @@ WINDOW = "Cat Cam"
 # (two hands are two paws); "3D head" shows the cat's 3D head, if it has one;
 # "Background" asks for a picture or video to put behind the animal; "Voice"
 # (on to begin with) turns your words into the animal's sounds, off lets the
-# call hear your own voice.
-TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"), ("background", "Background", "b"),
-           ("voice", "Voice", "v"))
+# call hear your own voice. "Paws" is a three-way choice instead of a switch: a click
+# or its key goes on to the next of PAW_MODES, its label says which it is.
+TOGGLES = (("tail", "Tail", "t"), ("paws", "Paws", "h"), ("head3d", "3D head", "d"),
+           ("background", "Background", "b"), ("voice", "Voice", "v"))
+# (mode, label): 3D paws, the photo paws (or drawn ones, for a cat without photos), or
+# your own hands cut out of the webcam picture (see catcam.real_hands). Cats without 3D
+# paws leave out the first.
+PAW_MODES = (("3d", "3D paws"), ("photo", "Photo paws"), ("hands", "Real hands"))
 # Keys shown in the bar in the bottom left corner (the switches show their own).
 KEY_HINTS = (("c", "Change cat"), ("1-8", "Reactions"), ("n", "Neutral face"), ("q", "Quit"))
 # The preview's controls are small and keep to the corners, so the animal has
@@ -130,6 +141,8 @@ class Cat:
     mesh: CatMesh | Head3D
     head3d: Head3D | None  # the real 3D head, if this cat has one
     paw: object  # 3D paws (catcam.paw3d), or else {(view, hand): PawSprite} (catcam.paws.paw_set)
+    photo_paws: dict  # {(view, hand): PawSprite}, the photo paws (drawn ones without photos)
+    colours: PawColours  # its fur's colours, which tint your real hands
     tail: TailSkin | None
     sounds: Sounds  # what your syllables become, see catcam.voice; empty = your own voice
     sprite: np.ndarray
@@ -150,6 +163,7 @@ def load_cats(renderer: Renderer) -> list[Cat]:
         a = cat_assets.load(name)
         mesh = CatMesh(renderer, a.sprite, a.points, a.background, snap=not a.mouth_set)
         eyelids = CatFace(a.sprite, a.points[:, :2])
+        photo_paws = paw_set(a.paws, paw_style(a.sprite, a.points))
         cats.append(Cat(
             name=name,
             points=a.points,
@@ -157,8 +171,9 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             mesh=mesh,
             head3d=Head3D(renderer, name, mesh, a.sprite, a.points, a.background, eyelids.lid_box())
             if has_head(name) else None,
-            paw=(paw3d.for_animal(renderer, animal(name), a.sprite, a.points)
-                 or paw_set(a.paws, paw_style(a.sprite, a.points))),
+            paw=paw3d.for_animal(renderer, animal(name), a.sprite, a.points) or photo_paws,
+            photo_paws=photo_paws,
+            colours=paw_colours(a.sprite, a.points),
             tail=tail_skin(a.paws),
             sounds=a.sounds,
             sprite=a.sprite,
@@ -294,11 +309,17 @@ class FaceState:
         self.easing = (head, offsets, blink, since) if t < 1 else None
 
 
+def has_paw3d(cat: Cat) -> bool:
+    return not isinstance(cat.paw, dict)
+
+
 def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | None,
-           background: np.ndarray | None = None) -> np.ndarray:
+           background: np.ndarray | None = None, paw_mode: str = "3d",
+           real_hands: RealHands | None = None) -> np.ndarray:
     """tail_hand: the hand ("Left", "Right") that lifts the tail instead of
     being a paw, if any. The tail is drawn while it sinks away, too.
-    background: a picture (BGR, output size) to put behind the animal."""
+    background: a picture (BGR, output size) to put behind the animal.
+    paw_mode: see PAW_MODES; "hands" draws real_hands' cut-outs in place of paws."""
     sprite = cat.eyelids.render(blink=tuple(state.blink))
     offsets = state.transfer.to_cat(state.offsets, cat.points)
     rotation = to_matrix(state.head + state.idle.head)
@@ -310,10 +331,24 @@ def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | 
         frame = cat.mesh.render(sprite, offsets, rotation, state.ears)
     if background is not None:
         frame = behind(frame, renderer.coverage, background)
-    if cat.tail is None:
-        return paws.draw(frame, cat.paw)
-    hidden = (tail_hand,) if tail_hand else ()
-    return paws.draw(tail.draw(frame, cat.tail), cat.paw, hidden=hidden)
+    hidden = ()
+    if cat.tail is not None:
+        frame = tail.draw(frame, cat.tail)
+        hidden = (tail_hand,) if tail_hand else ()
+    if paw_mode == "hands":
+        return real_hands.draw(frame, paws.slots, paws.scale, hidden) if real_hands is not None else frame
+    return paws.draw(frame, cat.photo_paws if paw_mode == "photo" else cat.paw, hidden=hidden)
+
+
+def paw_modes(paw3d: bool = True) -> list[tuple[str, str]]:
+    """The paw modes (mode, label) to choose from; paw3d: whether the cat has 3D paws."""
+    return [(mode, label) for mode, label in PAW_MODES if paw3d or mode != "3d"]
+
+
+def _label_width(name: str, label: str) -> int:
+    """A switch's label's width; the paws' is as wide as its widest mode's, so it doesn't jump."""
+    labels = [mode_label for _, mode_label in PAW_MODES] if name == "paws" else [label]
+    return max(glass.text_width(text, LABEL, 500) for text in labels)
 
 
 def toggle_rects(head3d: bool = True) -> dict[str, tuple[int, int, int, int]]:
@@ -323,7 +358,7 @@ def toggle_rects(head3d: bool = True) -> dict[str, tuple[int, int, int, int]]:
     for name, label, key in TOGGLES:
         if name == "head3d" and not head3d:
             continue
-        w = 8 + glass.SWITCH[0] + 6 + glass.text_width(label, LABEL, 500) + 5 \
+        w = 8 + glass.SWITCH[0] + 6 + _label_width(name, label) + 5 \
             + glass.keycap_width(key, *KEYCAP) + 8
         rects[name] = (x, MARGIN, w, PILL_H)
         x += w
@@ -338,8 +373,20 @@ def toggle_at(x: int, y: int, head3d: bool) -> str | None:
     return None
 
 
-def _switches(view: np.ndarray, states: dict[str, bool]) -> tuple[int, int, int, int]:
-    """The pill of switches in the top left corner; returns its (x, y, w, h)."""
+def _paw_dots(view: np.ndarray, x: int, y: int, mode: str, paw3d: bool):
+    """In the paws' switch's place: a dot per mode to choose from, the current one honey."""
+    modes = [m for m, _ in paw_modes(paw3d)]
+    w, h = glass.SWITCH
+    gap = 9
+    left = x + (w - gap * (len(modes) - 1)) // 2
+    for i, m in enumerate(modes):
+        glass.dot(view, left + i * gap, y + h // 2, 4 if m == mode else 2,
+                  glass.HONEY if m == mode else glass.MUTED)
+
+
+def _switches(view: np.ndarray, states: dict, paw3d: bool = True) -> tuple[int, int, int, int]:
+    """The pill of switches in the top left corner; returns its (x, y, w, h). states: each
+    switch's state, "paws" the paw mode (see PAW_MODES)."""
     rects = toggle_rects("head3d" in states)
     right = max(rx + w for rx, _, w, _ in rects.values()) + 4
     glass.panel(view, MARGIN, MARGIN, right - MARGIN, PILL_H, PILL_H // 2)
@@ -348,10 +395,14 @@ def _switches(view: np.ndarray, states: dict[str, bool]) -> tuple[int, int, int,
         if name not in rects:
             continue
         rx, ry, _, h = rects[name]
-        glass.switch(view, rx + 8, ry + (h - glass.SWITCH[1]) // 2, states[name])
+        if name == "paws":
+            _paw_dots(view, rx + 8, ry + (h - glass.SWITCH[1]) // 2, states[name], paw3d)
+            label = dict(PAW_MODES)[states[name]]
+        else:
+            glass.switch(view, rx + 8, ry + (h - glass.SWITCH[1]) // 2, states[name])
         tx = rx + 8 + glass.SWITCH[0] + 6
         glass.text(view, label, tx, ry + h / 2 + LABEL * 0.36, LABEL, weight=500)
-        glass.keycap(view, tx + glass.text_width(label, LABEL, 500) + 5, ry + (h - cap_h) // 2, key,
+        glass.keycap(view, tx + _label_width(name, label) + 5, ry + (h - cap_h) // 2, key,
                      cap_h, cap_font)
     return MARGIN, MARGIN, right - MARGIN, PILL_H
 
@@ -397,16 +448,18 @@ def _message(view: np.ndarray, lines: list[str], y: int):
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None,
             tail: bool = False, head3d: bool | None = None, background: bool = False,
-            voice: bool = True, voice_setup: VoiceSetup | None = None) -> np.ndarray:
+            voice: bool = True, voice_setup: VoiceSetup | None = None, paw_mode: str = "3d",
+            paw3d: bool = True) -> np.ndarray:
     """Mirrored like a mirror, with the switches and hints on glass, none of which
     reach the call. head3d: whether the 3D head is on; None leaves its switch out
     (the cat has none). voice_setup: the "Get the voice" button, in the bottom
-    right corner, for a Mac without BlackHole."""
+    right corner, for a Mac without BlackHole. paw_mode: the paws shown (see PAW_MODES);
+    paw3d: whether the cat has 3D paws to choose."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
-    states = ({"tail": tail} | ({} if head3d is None else {"head3d": head3d})
+    states = ({"tail": tail, "paws": paw_mode} | ({} if head3d is None else {"head3d": head3d})
               | {"background": background, "voice": voice})
     width, height = PREVIEW_SIZE
-    _switches(view, states)
+    _switches(view, states, paw3d)
     if voice_setup is not None:
         voice_setup.draw(view, width - MARGIN, height - MARGIN)
     _capsule(view, cat.name)
@@ -517,9 +570,19 @@ class Controls:
         self.head3d = True  # the 3D head switch
         self.background = False  # the background switch
         self.voice = True  # the voice switch: on = the animal's sounds, off = your own voice
+        self.paws = "3d"  # the paws chosen, see PAW_MODES
         self.has_head3d = True  # whether the current cat has a 3D head (its switch shows)
+        self.has_paw3d = True  # whether the current cat has 3D paws (that choice shows)
         self.reaction = None  # a reaction asked for by its number key, see take_reaction
         self.quit = False
+
+    def paw_mode(self) -> str:
+        """The paws shown: the ones chosen, the photo paws standing in for 3D paws the cat hasn't got."""
+        return "photo" if self.paws == "3d" and not self.has_paw3d else self.paws
+
+    def _next_paws(self):
+        modes = [mode for mode, _ in paw_modes(self.has_paw3d)]
+        self.paws = modes[(modes.index(self.paw_mode()) + 1) % len(modes)]
 
     def take_reaction(self) -> str | None:
         """The reaction asked for since the last take, if any."""
@@ -546,6 +609,8 @@ class Controls:
             hit = toggle_at(*click, self.has_head3d) if click is not None else None
             if click is not None and self.voice_setup is not None:
                 self.voice_setup.click(*click)
+            if key == ord("h") or hit == "paws":
+                self._next_paws()
             if key == ord("t") or hit == "tail":
                 self.tail = not self.tail
             if key == ord("d") or hit == "head3d":
@@ -586,16 +651,25 @@ class Tracked(NamedTuple):
     size: tuple[int, int]  # the frame's width and height
     face: object  # MediaPipe's FaceLandmarkerResult
     hands: object  # and HandLandmarkerResult
+    # Your hands cut out of the frame (catcam.real_hands.Cut or None, in the order of the
+    # hand tracker's hands) while they are shown, else None.
+    cuts: list | None = None
 
 
 class Tracker:
     """Reads the webcam and finds your face and hands on a thread of its own, so one
     frame is tracked while the one before is drawn. Only the newest frame is kept:
-    if drawing falls behind, frames are skipped rather than queued up."""
+    if drawing falls behind, frames are skipped rather than queued up.
 
-    def __init__(self, webcam, trackers):
+    While cut_for is set (to the animal's colours), your hands are cut out of each
+    frame too (see catcam.real_hands): the segmenter works on the frame alongside the
+    face and hand trackers, so it adds little to the time a frame takes."""
+
+    def __init__(self, webcam, trackers, segmenter: Segmenter | None = None):
         self.webcam = webcam
         self.face_tracker, self.hand_tracker = trackers
+        self.segmenter = segmenter
+        self.cut_for: PawColours | None = None
         self._ready = threading.Condition()
         self._newest: Tracked | None = None
         self._error: BaseException | None = None
@@ -612,15 +686,25 @@ class Tracker:
         return (self.face_tracker.detect_for_video(image, timestamp),
                 self.hand_tracker.detect_for_video(image, timestamp))
 
+    def cut(self, frame: np.ndarray, segmenting: Future, hands, colours: PawColours) -> list:
+        """The hands (a HandLandmarkerResult) cut out of frame (BGR), once the segmenter has
+        found its skin (segmenting: see Segmenter.start)."""
+        return cut_all(frame, segmenting.result(), hands, colours)
+
     def _run(self):
         start = time.monotonic()
         try:
             for frame, now in frames(self.webcam):
                 if self._stopping:
                     return
-                face, hands = self.track(frame, int((now - start) * 1000))
+                timestamp = int((now - start) * 1000)
+                colours = self.cut_for  # read once: the main thread sets it
+                segmenting = (self.segmenter.start(frame, timestamp)
+                              if colours is not None and self.segmenter is not None else None)
+                face, hands = self.track(frame, timestamp)
+                cuts = self.cut(frame, segmenting, hands, colours) if segmenting is not None else None
                 with self._ready:
-                    self._newest = Tracked(now, (frame.shape[1], frame.shape[0]), face, hands)
+                    self._newest = Tracked(now, (frame.shape[1], frame.shape[0]), face, hands, cuts)
                     self._ready.notify()
         except BaseException as e:  # e.g. the webcam stopping (SystemExit): the main thread raises it
             with self._ready:
@@ -640,12 +724,14 @@ class Tracker:
     def stop(self):
         self._stopping = True
         self._thread.join(timeout=STOP_TIMEOUT)
+        if self.segmenter is not None and not self._thread.is_alive():
+            self.segmenter.close()
 
 
 def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, tracker: Tracker, vcam,
            background: Background | None = None):
     state, paws, tail, tail_hands = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), TailHand()
-    chooser, reactions = Chooser(), Reactions()
+    chooser, reactions, real_hands = Chooser(), Reactions(), RealHands()
     controls.background = background is not None
     last = time.monotonic()
     notice_until = 0.0
@@ -659,17 +745,22 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
         dt, last = max(now - last, 1e-3), now
         state.update(tracked.face, cam_size, dt, now, voice.syllables.speaking)
         cat = shown(cats[controls.current], controls.head3d)
-        controls.has_head3d = cat.head3d is not None
+        controls.has_head3d, controls.has_paw3d = cat.head3d is not None, has_paw3d(cat)
+        paw_mode = controls.paw_mode()
+        # The next frames' hands are cut out only while they are shown.
+        tracker.cut_for = cat.colours if paw_mode == "hands" else None
         voice.sounds = cat.sounds if controls.voice else Sounds()
         background = _follow_switch(controls, chooser, background)
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
+        real_hands.update(tracked.cuts, paws.slots)
         tail_hand = tail_hands.update(paws.slots) if controls.tail and cat.tail is not None else None
         hand = paws.slots.get(tail_hand, {}) if tail_hand else {}
         tail.update(hand.get("params"), hand.get("presence", 0.0), dt, *cat.mesh.face_on_screen())
 
         special = effects.update(now, cat.name)
         picture = background.frame(now) if background is not None else None
-        out = special if special is not None else render(cat, state, paws, tail, tail_hand, picture)
+        out = special if special is not None else render(cat, state, paws, tail, tail_hand, picture,
+                                                         paw_mode, real_hands)
         out = reactions.draw(out, now)
         vcam.send(out)
         if controls.picking:
@@ -680,7 +771,8 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
                                        tail=controls.tail,
                                        head3d=controls.head3d if cat.head3d is not None else None,
                                        background=controls.background, voice=controls.voice,
-                                       voice_setup=controls.voice_setup))
+                                       voice_setup=controls.voice_setup, paw_mode=paw_mode,
+                                       paw3d=controls.has_paw3d))
         key = cv2.waitKey(1) & 0xFF
         if effects.needs_permission(key, now):
             notice_until = now + 10
@@ -722,6 +814,7 @@ def check(cats: list[Cat]):
         if out.shape != (OUT_H, OUT_W, 3) or not out.any():
             sys.exit(f"Drawing {cat.name} failed.")
     load_effects()  # its data file must load too
+    Segmenter().close()  # and the segmenter's model, for real hands
     import sounddevice  # noqa: F401  (imported only when needed, so check here they're there)
     if sys.platform == "darwin":
         import Quartz  # noqa: F401
@@ -791,7 +884,7 @@ def run(argv=None):
     voice_setup = VoiceSetup.for_this_mac()
     print("Pick a cat in the window. Keep a relaxed face for a second at the start.")
     settle()
-    tracker = Tracker(webcam, trackers).start()
+    tracker = Tracker(webcam, trackers, Segmenter()).start()
     try:
         with vcam:
             stream(cats, Controls(picker, mouse, voice_setup), effects, voice, tracker, vcam, background)

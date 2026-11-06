@@ -17,6 +17,7 @@ frames never drawn. Also counts the garbage collector's pauses.
     uv run python tools/frame_bench.py --video clip.mp4        # trackers on a recording
     uv run python tools/frame_bench.py --record clip.mp4       # record one from the webcam (10 s)
     uv run python tools/frame_bench.py --cats Woofgang --flat  # the photo cat instead of the 3D head
+    uv run python tools/frame_bench.py --video clip.mp4 --paws hands  # your real hands, cut out of the video
     uv run python tools/frame_bench.py --save frames/          # also write a few rendered frames
 """
 
@@ -41,6 +42,7 @@ from catcam.head3d import Head3D
 from catcam.head_pose import to_matrix
 from catcam.paws import Paws
 from catcam.picker import Picker
+from catcam.real_hands import RealHands, Segmenter
 from catcam.tail import Tail
 from catcam.voice import BLOCK, RATE, Voice
 
@@ -285,21 +287,31 @@ def report(name: str, timings: Timings, intervals: list[float], missed: int, ski
 class ScriptedTracker(app.Tracker):
     """The app's Tracker: it still tracks the webcam's frames, for the cost, but hands
     on the script's face and hand, so that every run moves the same. Also times the
-    main loop: a frame's work runs from getting its tracking to asking for the next."""
+    main loop: a frame's work runs from getting its tracking to asking for the next.
+    Real hands are cut out where the video's hands really are (none on blank frames),
+    and drawn for the script's hand."""
 
     def __init__(self, webcam, script: Script, timings: Timings):
-        super().__init__(webcam, app.create_trackers())  # fresh ones: their clocks restart
+        # Fresh trackers: their clocks restart.
+        super().__init__(webcam, app.create_trackers(), Segmenter())
         self.script, self.timings = script, timings
         self.tracking: list[float] = []
         self.handed = 0
         self.began = None
+        self.real_hands = None
 
     def track(self, frame, timestamp):
         start = time.perf_counter()
-        super().track(frame, timestamp)
+        _, self.real_hands = super().track(frame, timestamp)
         self.tracking.append((time.perf_counter() - start) * 1000)
         t = timestamp / 1000
         return self.script.face_result(t), self.script.hand_result(t)
+
+    def cut(self, frame, segmenting, hands, colours):
+        start = time.perf_counter()
+        cuts = super().cut(frame, segmenting, self.real_hands, colours)
+        self.tracking[-1] += (time.perf_counter() - start) * 1000  # waiting for the segmenter, then cutting
+        return cuts
 
     def next(self):
         if self.began is not None:
@@ -328,7 +340,7 @@ class Output:
 
 
 def run_cat(cats: list, index: int, flat: bool, script: Script, webcam: Webcam, picker: Picker, frames: int,
-            save: Path | None, voice: bool, window: bool) -> dict:
+            save: Path | None, voice: bool, window: bool, paws: str = "3d", tail: bool = True) -> dict:
     """The app's loop (catcam.app.stream) for one animal, timed."""
     cat = shown(cats[index], not flat)
     timings = Timings()
@@ -338,6 +350,8 @@ def run_cat(cats: list, index: int, flat: bool, script: Script, webcam: Webcam, 
             watch(timings, CatMesh, "_shape", "shape"),
             watch(timings, Renderer, "read", "readback"),
             watch(timings, Paws, "draw", "paws_draw"),
+            watch(timings, RealHands, "draw", "paws_draw"),
+            watch(timings, RealHands, "update", "state"),
             watch(timings, Tail, "draw", "tail_draw"),
             watch(timings, FaceState, "update", "state"),
             watch(timings, Paws, "update", "state"),
@@ -350,7 +364,7 @@ def run_cat(cats: list, index: int, flat: bool, script: Script, webcam: Webcam, 
                  stub(cv2, "waitKey", lambda *a: -1)]
     controls = app.Controls(picker, app.Mouse(picker))
     controls.current, controls.picking, controls.picked_once = index, False, True
-    controls.head3d, controls.tail = not flat, True
+    controls.head3d, controls.tail, controls.paws = not flat, tail, paws
     output = Output(controls, frames, save)
     tracker = ScriptedTracker(webcam, script, timings)
     webcam.restart()
@@ -379,7 +393,7 @@ def run_cat(cats: list, index: int, flat: bool, script: Script, webcam: Webcam, 
     if save is not None:
         save.mkdir(parents=True, exist_ok=True)
         for k, out in enumerate(output.kept):
-            kind = "flat" if flat else "3d"
+            kind = ("flat" if flat else "3d") + ("" if paws == "3d" else f"_{paws}")
             cv2.imwrite(str(save / f"{cat.name}_{kind}_{k * SAVE_EVERY:04d}.png"), out)
     missed = webcam.missed - missed_before
     intervals = list(np.diff(output.sent) * 1000)[1:]
@@ -422,6 +436,10 @@ def main(argv=None):
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--cats", nargs="*", help="animals to run (default: all with a 3D head)")
     parser.add_argument("--flat", action="store_true", help="draw the photo cats, not the 3D heads")
+    parser.add_argument("--paws", choices=[mode for mode, _ in app.PAW_MODES], default="3d",
+                        help="the paws: 3D, photo, or your real hands (cut out of --video)")
+    parser.add_argument("--no-tail", action="store_true",
+                        help="the tail off, so a hand alone is a paw (or your real hand), not the tail")
     parser.add_argument("--frames", type=int, default=300, help="frames per animal")
     parser.add_argument("--fps", type=float, default=FPS, help="webcam frame rate; 0 = as fast as possible")
     parser.add_argument("--voice", action="store_true", help="also run the voice on its thread")
@@ -447,7 +465,7 @@ def main(argv=None):
     results = {}
     for index in chosen:
         results[cats[index].name] = run_cat(cats, index, args.flat, script, webcam, picker, args.frames,
-                                            args.save, args.voice, args.window)
+                                            args.save, args.voice, args.window, args.paws, not args.no_tail)
     if args.window:
         cv2.destroyAllWindows()
     work = np.concatenate([r["work"] for r in results.values()])
