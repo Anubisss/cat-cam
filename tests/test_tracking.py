@@ -85,6 +85,38 @@ def test_a_pucker_at_rest_still_lets_the_neutral_face_adapt(rng):
     assert abs(state.offsets[61, 1]) < 0.002
 
 
+def test_talking_never_becomes_the_neutral_face(rng):
+    # Between syllables your mouth is often still part open, and jawOpen then
+    # rises only a little above its resting score. Taken for your neutral face,
+    # that made the animal's mouth open less and less as you talked.
+    points, matrix = _face(rng)
+    state = FaceState()
+    state.update(_result(points, matrix, jawOpen=0.03), (1280, 720), DT, 0.0)
+    lower = [14, 87, 178, 317, 402, 17, 84, 314]
+    width = np.ptp(points[:, 0])
+    for k in range(1, round(20 / DT)):  # 20 s of syllables, 4 a second
+        opening = 0.05 * width * abs(np.sin(np.pi * 4 * k * DT))
+        talking = points.copy()
+        talking[lower, 1] += opening
+        state.update(_result(talking, matrix, jawOpen=0.03 + 4 * opening / width), (1280, 720), DT,
+                     k * DT, talking=True)
+    shut = _result(points, matrix, jawOpen=0.03)
+    state.update(shut, (1280, 720), DT, 20.0, talking=True)
+    # A closed mouth is still closed, not pulled up above where it rests.
+    assert state.measured[1][14, 1] > -0.004
+
+
+def test_still_quiet_face_becomes_neutral_after_talking(rng):
+    points, matrix = _face(rng)
+    state = FaceState()
+    state.update(_result(points, matrix), (1280, 720), DT, 0.0)
+    moved = points.copy()
+    moved[61, 1] += 0.01  # a mouth corner sits a little lower from now on
+    for k in range(1, 200):
+        state.update(_result(moved, matrix), (1280, 720), DT, k * DT)
+    assert abs(state.offsets[61, 1]) < 0.002
+
+
 def _turned(matrix, yaw):
     """The matrix with the head turned by yaw radians (MediaPipe's axes)."""
     turned = matrix.copy()

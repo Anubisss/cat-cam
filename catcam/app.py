@@ -109,14 +109,19 @@ BLINK_RANGE = (0.2, 0.45)
 # ...and, as some people's blink score stays low, also how much the eye
 # opening shrank compared to your neutral face.
 SHUT_RANGE = (0.5, 0.9)
-# The neutral face only adapts while none of these is more than RELAXED_BELOW
-# above its resting score.
+# The neutral face only adapts once none of these has been more than RELAXED_BELOW
+# above its resting score (the mouth's: MOUTH_RELAXED_BELOW) for CALM_FOR s, and
+# you are not talking. Between syllables your mouth is often still part open, and
+# taken for your neutral face that made the animal's mouth open less as you talked.
 EXPRESSIVE = [
     "jawOpen", "mouthSmileLeft", "mouthSmileRight", "mouthPucker", "mouthFunnel",
     "mouthStretchLeft", "mouthStretchRight", "browInnerUp", "browOuterUpLeft",
     "browOuterUpRight", "eyeBlinkLeft", "eyeBlinkRight", "cheekPuff",
 ]
 RELAXED_BELOW = 0.25
+MOUTH = ("jawOpen", "mouthFunnel", "mouthPucker")  # the expressive scores your mouth opening moves
+MOUTH_RELAXED_BELOW = 0.06
+CALM_FOR = 0.6  # s
 # How sure the face detector must be to (re)find a face. MediaPipe's 0.5 lets a
 # face partly out of the picture or in a dim room go unfound for seconds.
 FACE_DETECTION_CONFIDENCE = 0.3
@@ -230,6 +235,7 @@ class FaceState:
                                                EXPRESSION_FLOOR, per_point=True)
         self.transfer = ExpressionTransfer()
         self.resting = RestingScores()
+        self.calm_for = 0.0  # s your face has been calm and quiet for (see CALM_FOR)
         self.neutral_pose = None  # the pose that faces the viewer; None = looking into the camera
         self.take_pose = False
         self.head = np.zeros(3)  # rotation vector; 0 = facing the viewer
@@ -280,7 +286,11 @@ class FaceState:
         closed = blinks(scores, self.face, self.transfer.neutral, rest)
         opening = 1 - np.exp(-dt / BLINK_OPEN)
         self.blink = np.where(closed > self.blink, closed, self.blink + opening * (closed - self.blink))
-        relaxed = max(scores[name] - rest[name] for name in EXPRESSIVE) < RELAXED_BELOW
+        calm = not talking and all(
+            scores[name] - rest[name] < (MOUTH_RELAXED_BELOW if name in MOUTH else RELAXED_BELOW)
+            for name in EXPRESSIVE)
+        self.calm_for = self.calm_for + dt if calm else 0.0
+        relaxed = self.calm_for >= CALM_FOR
         offsets = EXPRESSION_GAIN * self.transfer(self.face, relaxed)
         self.offsets = self.expression_filter(offsets, dt)
         self.measured = (head, offsets, closed)
