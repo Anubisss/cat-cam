@@ -34,6 +34,9 @@ EYE_SEED = (0.42, 0.2)
 EYE_SEARCH = (0.95, 0.4)
 MAX_LID_SHIFT = 0.25
 MAX_CORNER_SHIFT = 0.35
+# Hand-placed eyes (see place_eyes): beyond the eye itself the face goes along with
+# it, less and less over this many face widths.
+EYE_FOLLOW = 0.15
 
 
 def _eye_opening(bgr: np.ndarray, upper: np.ndarray, lower: np.ndarray):
@@ -115,6 +118,47 @@ def snap_eyes(bgr: np.ndarray, landmarks: np.ndarray):
         # A squint is barely open: shifting its lids must not cross them.
         lower[:, 1] = np.maximum(lower[:, 1], _sample(upper, lower[:, 0]))
     return eyes
+
+
+def place_eyes(landmarks: np.ndarray, placed: np.ndarray, face_width: float) -> np.ndarray:
+    """landmarks with the eyes moved where they were placed by hand, for faces whose fit
+    misses the eyes (a frowning cat's, deep under its brows). placed: (4, 2) px, the
+    image-left eye's outer and inner corner, then the image-right eye's inner and outer
+    corner; optionally followed by the middle of each eye's upper and lower lid
+    (image-left eye's first), for eyes not shaped like the fit's.
+
+    Each eye is moved, turned and scaled onto its corners, its iris with it, and the
+    face around it goes along, less and less further away (EYE_FOLLOW). Given the lids'
+    middles, each lid is then widened or narrowed to pass through its middle."""
+    out = landmarks.copy()
+    xy = landmarks[:, 0] + 1j * landmarks[:, 1]
+    moves, weights, inside = [], [], []
+    lids = []
+    for eye, ((upper, lower), (outer, inner)) in enumerate(
+            zip(EYES, ((placed[0], placed[1]), (placed[3], placed[2])))):
+        p0, p1 = xy[upper[0]], xy[upper[-1]]  # the fitted outer and inner corner
+        q0, q1 = complex(*outer), complex(*inner)
+        moved = q0 + (q1 - q0) / (p1 - p0) * (xy - p0)
+        centre, radius = (p0 + p1) / 2, abs(p1 - p0) / 2
+        beyond = np.maximum(np.abs(xy - centre) - radius, 0)
+        moves.append(moved - xy)
+        weights.append(np.exp(-((beyond / (EYE_FOLLOW * face_width)) ** 2)))
+        inside.append(beyond == 0)
+        if len(placed) >= 8:
+            lids += [(upper, q0, q1, placed[4 + 2 * eye]), (lower, q0, q1, placed[5 + 2 * eye])]
+    # An eye's own points go with it alone; between the eyes their pulls blend.
+    weights = np.where(inside[::-1], 0.0, weights)
+    xy = xy + (np.array(weights) * moves).sum(axis=0) / np.maximum(np.sum(weights, axis=0), 1)
+    for contour, q0, q1, middle in lids:
+        # Along the corner-to-corner axis (t) and across it (h), as a multiple of the axis.
+        local = (xy[contour] - q0) / (q1 - q0)
+        want = ((complex(*middle) - q0) / (q1 - q0)).imag
+        have = np.interp(0.5, local.real, local.imag) if local.real[0] < local.real[-1] \
+            else np.interp(0.5, local.real[::-1], local.imag[::-1])
+        if abs(have) > 1e-6:
+            xy[contour] = q0 + (q1 - q0) * (local.real + 1j * local.imag * want / have)
+    out[:, 0], out[:, 1] = xy.real, xy.imag
+    return out
 
 
 def _sample(points, xs):

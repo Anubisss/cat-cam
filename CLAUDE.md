@@ -100,7 +100,8 @@ in their vertex shader, and blinks repaint only the texels near the lids.
    mouth open, eyes closed and head turned, and look at the mouth closely.
    `catcam/mouth_fit.py` corrects lips that were fitted onto the wrong line;
    if the mouth still looks off, that is where to look, or place the lips by
-   hand with an `all_cats/<Name>Mouth.txt` (see `catcam/prepare.py`).
+   hand with an `all_cats/<Name>Mouth.txt` (see `catcam/prepare.py`). Eyes
+   that don't close all the way: place them with an `all_cats/<Name>Eyes.txt`.
 4. Add the name to `test_shipped_cats` in `tests/test_cats.py`, regenerate
    `docs/picker.jpg` if the picker changed, and commit the pictures in
    `all_cats/` together with `assets/cats/<Name>/`.

@@ -5,8 +5,12 @@ its face landmarks and writes assets/cats/<Name>/cutout.png and face.npz.
 Paw photos next to it (<Name>PawsFront.png, <Name>PawsBack.png) become its
 paw sprites (see catcam.paw_photos). A <Name>Mouth.txt next to it puts the
 lips where the face fit can't find them: one "x, y" per line, portrait px,
-along the line where the lips meet from one mouth corner to the other. Already prepared cats and paws are
-skipped unless --force is given.
+along the line where the lips meet from one mouth corner to the other. A
+<Name>Eyes.txt does the same for eyes the fit misses: four "x, y" lines, the
+image-left eye's outer and inner corner, then the image-right eye's inner and
+outer corner, optionally followed by four more: the middle of the upper and the
+lower lid, image-left eye first (see catcam.cat_face.place_eyes). Already
+prepared cats and paws are skipped unless --force is given.
 
 Run after adding or replacing a portrait:
 
@@ -20,6 +24,7 @@ import cv2
 import numpy as np
 
 from catcam import paw_photos
+from catcam.cat_face import place_eyes
 from catcam.cats import portraits as find_portraits
 from catcam.landmark_fit import (
     FitError,
@@ -168,6 +173,11 @@ def main():
             points[:, :2] = place_mouth(points, np.loadtxt(mouth, delimiter=",", ndmin=2),
                                         np.ptp(points[:, 0]))[:, :2]
             print(f"  lips placed along {mouth.name}")
+        eyes = PORTRAITS / f"{name}Eyes.txt"
+        if eyes.is_file():
+            points[:, :2] = place_eyes(points, np.loadtxt(eyes, delimiter=",", ndmin=2),
+                                       np.ptp(points[:, 0]))[:, :2]
+            print(f"  eyes placed at {eyes.name}")
         # The fit can put a chin past a head cut off at the picture's edge.
         h, w = images[name].shape[:2]
         points[:, 0] = np.clip(points[:, 0], 0, w - 1)

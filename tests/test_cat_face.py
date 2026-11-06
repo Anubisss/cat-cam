@@ -1,6 +1,6 @@
 import numpy as np
 
-from catcam.cat_face import EYES, CatFace, _sample
+from catcam.cat_face import EYES, CatFace, _sample, place_eyes
 
 
 def test_open_eyes_leave_the_sprite_alone(real_cats):
@@ -62,3 +62,20 @@ def test_blinks_stay_in_the_lid_box(real_cats):
             assert changed.any(), cat.name
             changed[y0:y1, x0:x1] = False
             assert not changed.any(), cat.name
+
+
+def test_placed_eyes_land_on_their_corners_and_lid_middles(real_cats):
+    points = real_cats[0].points
+    corners = points[[EYES[0][0][0], EYES[0][0][-1], EYES[1][0][-1], EYES[1][0][0]], :2] + (5.0, -30.0)
+    lids = np.array([points[upper, :2].mean(axis=0) + (0, d) for upper, _ in EYES for d in (-40.0, 40.0)])
+    width = np.ptp(points[:, 0])
+    placed = place_eyes(points, corners, width)
+    assert np.allclose(placed[[33, 133, 362, 263], :2], corners, atol=1e-6)
+    assert np.allclose(placed[:, 2], points[:, 2])  # depth untouched
+    chin = 152
+    assert np.allclose(placed[chin], points[chin], atol=0.5)  # far from the eyes nothing moves
+    shaped = place_eyes(points, np.vstack([corners, lids]), width)
+    for (upper, lower), (top, bottom) in zip(EYES, (lids[:2], lids[2:])):
+        for contour, middle in ((upper, top), (lower, bottom)):
+            xs = shaped[contour, 0]
+            assert abs(_sample(shaped[contour], np.array([middle[0]]))[0] - middle[1]) < 0.15 * np.ptp(xs)
