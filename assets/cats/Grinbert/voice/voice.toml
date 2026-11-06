@@ -1,6 +1,5 @@
 # How Grinbert's trills follow your voice (see Style in catcam/voice.py).
-# Cheerful: quick little trills that follow every rise and fall of yours.
-pitch_follow = 1.0  # trill semitones per semitone you go above or below your usual pitch
-jitter = 0.6  # semitones of random pitch per trill
-shortest = 0.12  # s a trill plays at least, even for the shortest syllable
-release = 0.06  # s it fades out over when your syllable ends
+# Cheerful and chatty: trills along with you, often.
+pitch_follow = 0.4  # trill semitones per semitone you go above or below your usual pitch
+jitter = 0.3  # semitones of random pitch per trill (it goes up or down 2 at most in all)
+gap = 0.6  # s it stays quiet after a trill before the next can start (up to 1.5 times that)

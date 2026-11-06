@@ -30,9 +30,10 @@ in their vertex shader, and blinks repaint only the texels near the lids.
 - `catcam/app.py`: main loop (webcam, tracking, render, virtual camera), the
   preview window, keys, the switches; `glass.py` draws the window's glass
   panels, switches and text, `picker.py` the cat picker.
-- `catcam/voice.py`: your microphone as the animal's sounds (a bark or a
-  meow per syllable, from `assets/cats/<Name>/voice/`, made for the cats by
-  `tools/cat_voices.py`), out to the BlackHole virtual microphone. `idle.py`: what the
+- `catcam/voice.py`: your microphone as the animal's sounds (whole barks or
+  meows started by your syllables, from `assets/cats/<Name>/voice/`, cut out
+  of real CC0 recordings by `tools/cat_voices.py`), out to the BlackHole
+  virtual microphone. `idle.py`: what the
   animal does by itself while you are still. `background.py`: a picture or
   video behind the animal. `reactions.py`: emoji reactions on the number
   keys, drawn from the Mac's emoji font at runtime (never commit Apple's

@@ -3,8 +3,10 @@ import pytest
 
 from catcam.voice import (
     BLOCK,
-    MIN_BARK,
+    GAP_SPREAD,
+    LEVEL,
     MIN_GAP,
+    PITCH_LIMIT,
     PITCH_WINDOW,
     RATE,
     STYLE_FILE,
@@ -83,21 +85,35 @@ def _voice(seconds, pitch, amplitude=0.1):
     return (amplitude * (2 * (t * pitch % 1) - 1)).astype(np.float32)
 
 
-def _say(voice, signal):
-    """Feeds signal to voice; returns the output and the barks started (samples arrays)."""
+def _say(voice, signal, when=None):
+    """Feeds signal to voice; returns the output and the sounds started (samples
+    arrays), and adds the times (s) they started at to `when`."""
     out, started = [], []
     for i in range(0, len(signal), BLOCK):
-        before = voice.barks[-1] if voice.barks else None
+        before = voice.bark
         out.append(voice.process(signal[i:i + BLOCK]))
-        if voice.barks and voice.barks[-1] is not before:
-            started.append(voice.barks[-1].samples)
+        if voice.bark is not None and voice.bark is not before:
+            started.append(voice.bark.samples)
+            if when is not None:
+                when.append(i / RATE)
     return np.concatenate(out), started
 
 
-def _dog(rng_seed=0):
+def _tone(seconds):
+    return np.sin(np.linspace(0, 2 * np.pi * 400 * seconds, int(seconds * RATE))).astype(np.float32)
+
+
+def _dog(rng_seed=0, style=None):
     voice = Voice(np.random.default_rng(rng_seed))
-    voice.sounds = Sounds((np.sin(np.linspace(0, 400, int(0.35 * RATE))).astype(np.float32),))
+    voice.sounds = Sounds((_tone(0.35),), style or Style())
     return voice
+
+
+def _syllables(count, seconds=0.1, pause=0.1, pitch=120):
+    """count syllables of your voice with pauses between them, after a pause."""
+    gap = np.zeros(int(pause * RATE), np.float32)
+    return np.concatenate([np.zeros(int(0.3 * RATE), np.float32)]
+                          + [np.concatenate([_voice(seconds, pitch), gap]) for _ in range(count)])
 
 
 def _sounding(out):
@@ -113,34 +129,50 @@ def test_finds_the_pitch_of_a_voice():
     assert estimate_pitch(hiss) is None
 
 
-def test_barks_follow_your_pitch():
-    pause = np.zeros(int(0.2 * RATE), np.float32)
-    usual = np.concatenate([np.concatenate([_voice(0.2, 120), pause]) for _ in range(4)])
-    voice = _dog()
-    _, normal = _say(voice, usual)
-    _, high = _say(voice, np.concatenate([_voice(0.2, 180), pause]))
-    _, low = _say(voice, np.concatenate([_voice(0.2, 90), pause]))
-    # A higher bark is played faster, so it is shorter.
-    assert len(high[0]) < 0.85 * np.median([len(b) for b in normal[1:]])
-    assert len(low[0]) > 1.1 * np.median([len(b) for b in normal[1:]])
+def test_sounds_follow_your_pitch_a_little():
+    voice = Voice(np.random.default_rng(0))
+    voice.sounds = Sounds((_tone(0.1),), Style(jitter=0, gap=0))
+    _, normal = _say(voice, _syllables(4, pause=0.2, pitch=120))
+    _, high = _say(voice, _syllables(1, pause=0.2, pitch=180))
+    _, low = _say(voice, _syllables(1, pause=0.2, pitch=90))
+    _, squeal = _say(voice, _syllables(1, pause=0.2, pitch=390))
+    usual = np.median([len(s) for s in normal[1:]])
+    # A higher sound is played faster, so it is shorter...
+    assert len(high[0]) < 0.97 * usual and len(low[0]) > 1.03 * usual
+    # ...but never by more than PITCH_LIMIT, however high you go, or it sounds like a robot.
+    shortest = len(_tone(0.1)) * 2 ** (-PITCH_LIMIT / 12)
+    assert all(len(s) >= shortest - 2 for s in normal + high + low + squeal)
 
 
-def test_barks_last_as_long_as_your_syllables():
+def test_a_sound_always_plays_to_its_end():
     pause = np.zeros(int(0.5 * RATE), np.float32)
-    short, _ = _say(_dog(), np.concatenate([pause, _voice(0.06, 120), pause]))
-    long, _ = _say(_dog(), np.concatenate([pause, _voice(0.5, 120), pause]))
-    assert MIN_BARK <= _sounding(short) < 0.16
-    assert _sounding(long) > 0.3  # the whole bark
+    voice = Voice(np.random.default_rng(0))
+    voice.sounds = Sounds((_tone(1.0),), Style(jitter=0, pitch_follow=0))
+    out, started = _say(voice, np.concatenate([pause, _voice(0.06, 120), pause, pause]))
+    assert len(started) == 1
+    assert _sounding(out) == pytest.approx(len(started[0]) / RATE, abs=0.01)  # not cut when you stop
 
 
-def test_the_next_syllable_cuts_the_bark_short():
-    voice = _dog()
-    # Quick connected syllables: 10 dB dips between them, no pauses.
-    quick = np.concatenate([np.zeros(int(0.3 * RATE), np.float32)]
-                           + [_voice(0.07, 120) * (1 if i % 2 == 0 else 0.3) for i in range(12)])
-    _, started = _say(voice, quick)
-    assert len(started) >= 4
-    assert len(voice.barks) <= 2  # the earlier ones were faded out, not stacked up
+def test_quick_syllables_never_cut_or_stack_sounds():
+    voice = _dog(style=Style(gap=0))
+    talk = np.concatenate([_syllables(20, seconds=0.07, pause=0.06), np.zeros(RATE // 2, np.float32)])
+    out, started = _say(voice, talk)
+    assert 3 <= len(started) < 20  # syllables come quicker than barks can, so some pass
+    # One at a time and each whole: the output is just the sounds, one after another.
+    assert np.sum(out ** 2) == pytest.approx(sum(np.sum(s ** 2) for s in started), rel=1e-4)
+    assert np.abs(out).max() <= np.abs(np.concatenate(started)).max() + 1e-6
+
+
+def test_the_animal_waits_its_gap_between_sounds():
+    talk = _syllables(25, pause=0.08)  # 4.5 s of steady talk
+    counts = []
+    for gap in (0.0, 1.0):
+        voice, when = _dog(style=Style(gap=gap)), []
+        _, started = _say(voice, talk, when)
+        counts.append(len(started))
+        spacing = np.diff(when)
+        assert spacing.min() >= 0.35 + GAP_SPREAD[0] * gap - 0.01  # the sound, then the gap
+    assert counts[0] >= 8 and 2 <= counts[1] <= 4  # a chatty dog, a cat that takes its time
 
 
 def test_without_sounds_your_voice_passes_through():
@@ -192,10 +224,10 @@ def test_every_animal_has_its_own_voice(real_cats):
     styles = set()
     for cat in real_cats:
         clips = cat.sounds.clips
+        assert len(clips) >= 5, cat.name  # several, so it doesn't repeat itself
         if cat.name == "Woofgang":
-            assert len(clips) == 1 and cat.sounds.style == Style()  # one bark, the default style
+            assert cat.sounds.style == Style()  # barks, the default style
         else:
-            assert len(clips) >= 5, cat.name  # several, so it doesn't repeat itself
             styles.add(cat.sounds.style)
         for sound in clips:
             assert sound.dtype == np.float32 and sound.ndim == 1
@@ -216,10 +248,10 @@ def test_a_voice_toml_sets_the_style(tmp_path):
     soundfile = pytest.importorskip("soundfile")
     soundfile.write(str(tmp_path / "meow.wav"), np.sin(np.linspace(0, 300, RATE // 2)), RATE)
     assert load_sounds(tmp_path).style == Style()  # no file: the defaults
-    (tmp_path / STYLE_FILE).write_text("shortest = 0.4  # s\nrelease = 0.3\n")
+    (tmp_path / STYLE_FILE).write_text("gap = 1.5  # s\njitter = 0\n")
     sounds = load_sounds(tmp_path)
     assert len(sounds.clips) == 1  # the toml isn't taken for a sound
-    assert sounds.style == Style(shortest=0.4, release=0.3)  # the rest stays as it was
+    assert sounds.style == Style(gap=1.5, jitter=0)  # the rest stays as it was
     assert not load_sounds(tmp_path / "missing")
 
 
@@ -228,24 +260,20 @@ def test_a_bad_voice_toml_says_what_is_wrong(tmp_path):
     path.write_text("lenght = 0.4\n")
     with pytest.raises(ValueError, match="unknown setting lenght"):
         load_style(path)
-    path.write_text('release = "long"\n')
-    with pytest.raises(ValueError, match="release must be a number"):
+    path.write_text('gap = "long"\n')
+    with pytest.raises(ValueError, match="gap must be a number"):
         load_style(path)
     path.write_text("jitter = -1\n")
     with pytest.raises(ValueError, match="jitter"):
         load_style(path)
 
 
-def test_a_meow_style_plays_on_after_a_short_syllable():
-    pause = np.zeros(int(0.5 * RATE), np.float32)
-    syllable = np.concatenate([pause, _voice(0.06, 120), pause])
-    meow = np.sin(np.linspace(0, 1500, RATE)).astype(np.float32)  # 1 s
-    lengths = []
-    for style in (Style(), Style(shortest=0.4, release=0.3)):
-        voice = Voice(np.random.default_rng(0))
-        voice.sounds = Sounds((meow,), style)
-        lengths.append(_sounding(_say(voice, syllable)[0]))
-    assert lengths[0] < 0.16 and lengths[1] > 0.45  # at least `shortest`, then fading
+def test_sounds_are_made_as_loud_as_each_other(tmp_path):
+    soundfile = pytest.importorskip("soundfile")
+    for name, amplitude in (("quiet.wav", 0.05), ("loud.wav", 0.8)):
+        soundfile.write(str(tmp_path / name), amplitude * _tone(0.5), RATE)
+    for clip in load_sounds(tmp_path).clips:
+        assert np.sqrt(np.mean(clip[RATE // 10:-RATE // 10] ** 2)) == pytest.approx(LEVEL, rel=0.02)
 
 
 def test_the_same_sound_never_plays_twice_in_a_row():

@@ -1,17 +1,23 @@
 """Your voice, as your animal's.
 
-While you talk, every syllable you say comes out as the animal's sound (the
-dog barks, the cats meow, trill or grumble), shaped like you said it: as
-loud, higher or lower as your voice goes above or below its usual pitch, and
-as long: a sound fades out when your syllable ends and is cut off when the
-next one starts, so quick talk gives quick, clipped barks. It goes to a
-virtual microphone (BlackHole), which the call uses instead of your real one,
-so your own voice is never heard. With an animal that has no sounds (or the
-app's Voice switch off), your voice passes through unchanged.
+While you talk, your animal talks along in its own sounds: the dog barks, the
+cats meow, trill or grumble. A sound starts with one of your syllables, as
+loud as you said it and a little higher or lower as your voice goes above or
+below its usual pitch, and then plays to its natural end, the way an animal
+finishes its meow. The animal only starts its next sound with a later
+syllable of yours, once it has been quiet for a while (its gap): a dog barks
+along with almost every syllable, a cat meows a few times a sentence. The
+sounds go to a virtual microphone (BlackHole), which the call uses instead of
+your real one, so your own voice is never heard. With an animal that has no
+sounds (or the app's Voice switch off), your voice passes through unchanged.
+
+The sounds are real recordings, played as they are; they are only made a
+little higher or lower (at most PITCH_LIMIT), as more than that makes an
+animal sound like a sped-up tape or a robot.
 
 An animal's sounds are in assets/cats/<Name>/voice/. A voice.toml next to them
-can change how they follow your voice (see Style): a long meow, say, plays on
-for longer after your syllable than a bark does.
+can change how they follow your voice (see Style): a cat waits longer between
+its meows than a dog between its barks.
 
 Syllables are found in your loudness: one starts where it rises clearly above
 both the background noise and the dip after the previous syllable.
@@ -37,24 +43,25 @@ RISE = 6.0  # a syllable is at least this much louder than the dip before it
 SMOOTHING = 0.015  # s, time constant of the loudness
 NOISE_CREEP = 3.0  # dB/s the noise level rises while it's louder (it drops at once)
 MIN_VOICED = 0.03  # s the voice must last before it counts, so clicks don't bark
-MIN_GAP = 0.12  # s between two barks at least
-LOUDNESS = (12.0, 36.0)  # dB above the noise mapped to the quietest..loudest bark
-GAIN = (0.15, 0.5)  # volume of the quietest..loudest bark (1 = the sound as recorded)
-LOUD_PITCH = 2.0  # semitones higher for the loudest barks
+MIN_GAP = 0.12  # s between two syllables at least
+LOUDNESS = (12.0, 36.0)  # dB above the noise mapped to the quietest..loudest sound
+GAIN = (0.15, 0.5)  # volume of the quietest..loudest sound (1 = as loud as LEVEL)
+LEVEL = 0.32  # RMS every sound is made as loud as at its loudest, so none stands out
+LOUDEST = 0.05  # s, the stretch of a sound its loudness (for LEVEL) is measured over
+LOUD_PITCH = 1.0  # semitones higher for the loudest sounds
 
 # Your pitch, measured at the start of each syllable.
 PITCH_RANGE = (70.0, 400.0)  # Hz of a speaking voice
 PITCH_WINDOW = 0.04  # s of your voice it is measured on
 VOICING = 0.5  # autocorrelation peak needed to count as a pitch, not a hiss
-PITCH_FOLLOW = 0.7  # sound semitones per semitone you are above or below your usual pitch
-PITCH_LIMIT = 7.0  # semitones the bark goes up or down at most
+PITCH_FOLLOW = 0.5  # sound semitones per semitone you are above or below your usual pitch
+PITCH_LIMIT = 2.0  # semitones a sound goes up or down at most; more sounds like a robot
 USUAL_PITCH_ADAPT = 0.1  # how quickly your usual pitch adapts, per syllable
-JITTER = 0.25  # semitones of random pitch, so repeated barks differ a little
+JITTER = 0.25  # semitones of random pitch, so a repeated sound differs a little
 
-# Bark length, in s.
-MIN_BARK = 0.08  # played at least this long, even for the shortest syllable
-RELEASE = 0.04  # fade-out when your syllable ends
-CUT = 0.012  # fade-out when the next syllable starts
+# Between sounds.
+GAP = 0.2  # s the animal is quiet after a sound before the next can start
+GAP_SPREAD = (0.7, 1.5)  # times the gap, at random, so the animal doesn't keep time like a machine
 
 
 @dataclass(frozen=True)
@@ -63,8 +70,7 @@ class Style:
     animal's voice.toml can set any of these, by the same names and units."""
     pitch_follow: float = PITCH_FOLLOW  # sound semitones per semitone you go above or below your usual pitch
     jitter: float = JITTER  # semitones of random pitch per sound
-    shortest: float = MIN_BARK  # s a sound plays at least, even for the shortest syllable
-    release: float = RELEASE  # s it fades out over when your syllable ends
+    gap: float = GAP  # s the animal is quiet after a sound before the next can start
 
 
 @dataclass(frozen=True)
@@ -91,9 +97,18 @@ def load_style(path: Path) -> Style:
     return Style(**{name: float(value) for name, value in values.items()})
 
 
+def _level(sound: np.ndarray) -> np.ndarray:
+    """sound made as loud as LEVEL in its loudest moment, without clipping."""
+    n = min(max(int(LOUDEST * RATE), 1), len(sound))
+    energy = np.concatenate([[0.0], np.cumsum(np.square(sound, dtype=np.float64))])
+    loudest = np.sqrt((energy[n:] - energy[:-n]).max() / n) if n else 0.0
+    scale = min(LEVEL / max(loudest, 1e-6), 0.99 / max(np.abs(sound).max(), 1e-6))
+    return (scale * sound).astype(np.float32)
+
+
 def load_sounds(folder: Path) -> Sounds:
-    """The sounds in folder as mono float32 at RATE, peaking at 0.9, with the
-    style its voice.toml asks for; empty if there are none."""
+    """The sounds in folder as mono float32 at RATE, all as loud as each other,
+    with the style its voice.toml asks for; empty if there are none."""
     if not folder.is_dir():
         return Sounds()
     import soundfile
@@ -103,7 +118,7 @@ def load_sounds(folder: Path) -> Sounds:
     for path in sorted(p for p in folder.iterdir() if p.suffix.lower() in SOUND_TYPES):
         samples, rate = soundfile.read(str(path), dtype="float32", always_2d=True)
         mono = resample_poly(samples.mean(axis=1), RATE, rate).astype(np.float32)
-        clips.append(0.9 * mono / max(np.abs(mono).max(), 1e-6))
+        clips.append(_level(mono))
     style = folder / STYLE_FILE
     return Sounds(tuple(clips), load_style(style) if style.is_file() else Style())
 
@@ -162,26 +177,20 @@ class Syllables:
 
 
 class Bark:
-    """One playing sound, which can be faded out early."""
+    """One playing sound. It always plays to its end: cut short, a meow
+    sounds like a blip from a machine."""
 
     def __init__(self, samples: np.ndarray):
         self.samples, self.position = samples, 0
-        self.end, self.fade = len(samples), 1  # sample where it has faded out, over how many
-
-    def stop(self, seconds: float):
-        """Fade out over the next `seconds`, unless it ends sooner anyway."""
-        fade = max(int(seconds * RATE), 1)
-        if self.position + fade < self.end:
-            self.end, self.fade = self.position + fade, fade
 
     def take(self, n: int) -> np.ndarray:
-        index = np.arange(self.position, min(self.position + n, self.end))
+        part = self.samples[self.position:self.position + n]
         self.position += n
-        return self.samples[index] * np.clip((self.end - index) / self.fade, 0, 1)
+        return part
 
     @property
     def done(self) -> bool:
-        return self.position >= self.end
+        return self.position >= len(self.samples)
 
 
 class Voice:
@@ -193,7 +202,8 @@ class Voice:
         self.rng = rng or np.random.default_rng()
         self.recent = np.zeros(int(PITCH_WINDOW * RATE), np.float32)  # your latest voice
         self.usual_pitch = None  # log2 Hz, adapts to you
-        self.barks: list[Bark] = []
+        self.bark: Bark | None = None  # the sound playing
+        self.quiet = 0.0  # s the animal still stays quiet for before its next sound
         self.last = None  # index of the clip played last, so the next is another one
 
     def _semitones(self, pitch: float | None, follow: float) -> float:
@@ -205,7 +215,7 @@ class Voice:
             self.usual_pitch = octave
         above = 12 * (octave - self.usual_pitch)
         self.usual_pitch += USUAL_PITCH_ADAPT * (octave - self.usual_pitch)
-        return float(np.clip(follow * above, -PITCH_LIMIT, PITCH_LIMIT))
+        return follow * above
 
     def _pick(self, count: int) -> int:
         """A random clip, never the one just played (if there is another)."""
@@ -213,10 +223,12 @@ class Voice:
         self.last = options[int(self.rng.integers(len(options)))]
         return self.last
 
-    def _bark(self, sounds: Sounds, above: float, pitch: float | None) -> Bark:
+    def _bark(self, sounds: Sounds, above: float, tone: float) -> Bark:
+        """A sound for a syllable `above` dB louder than the noise and `tone`
+        sound semitones above your usual pitch."""
         loud = _ramp(above, *LOUDNESS)
-        semitones = (self._semitones(pitch, sounds.style.pitch_follow) + LOUD_PITCH * loud
-                     + self.rng.normal(0, sounds.style.jitter))
+        semitones = float(np.clip(tone + LOUD_PITCH * loud + self.rng.normal(0, sounds.style.jitter),
+                                  -PITCH_LIMIT, PITCH_LIMIT))
         sound = sounds.clips[self._pick(len(sounds.clips))]
         speed = 2 ** (semitones / 12)
         resampled = np.interp(np.arange(0, len(sound) - 1, speed), np.arange(len(sound)), sound)
@@ -229,21 +241,21 @@ class Voice:
         above = self.syllables(level, len(mic) / RATE)
         sounds = self.sounds  # read once: the app swaps them from another thread
         if not sounds:
-            self.barks.clear()
+            self.bark = None
             return mic.copy()
+        self.quiet -= len(mic) / RATE
         if above is not None:
-            for bark in self.barks:
-                bark.stop(CUT)
-            self.barks.append(self._bark(sounds, above, estimate_pitch(self.recent)))
-        elif not self.syllables.speaking:
-            for bark in self.barks:
-                if bark.position >= sounds.style.shortest * RATE:
-                    bark.stop(sounds.style.release)
+            # Every syllable teaches the usual pitch, even those the animal lets pass.
+            tone = self._semitones(estimate_pitch(self.recent), sounds.style.pitch_follow)
+            if self.bark is None and self.quiet <= 0:
+                self.bark = self._bark(sounds, above, tone)
         out = np.zeros(len(mic), np.float32)
-        for bark in self.barks:
-            part = bark.take(len(mic))
-            out[:len(part)] += part
-        self.barks = [bark for bark in self.barks if not bark.done]
+        if self.bark is not None:
+            part = self.bark.take(len(mic))
+            out[:len(part)] = part
+            if self.bark.done:
+                self.bark = None
+                self.quiet = sounds.style.gap * self.rng.uniform(*GAP_SPREAD)
         return np.clip(out, -1, 1)
 
 

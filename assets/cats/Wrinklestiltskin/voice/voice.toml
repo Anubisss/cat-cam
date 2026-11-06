@@ -1,6 +1,5 @@
 # How Wrinklestiltskin's yowls follow your voice (see Style in catcam/voice.py).
-# Sassy: raspy yowls that go wherever your voice goes, and then some.
-pitch_follow = 1.0  # yowl semitones per semitone you go above or below your usual pitch
-jitter = 0.4  # semitones of random pitch per yowl
-shortest = 0.3  # s a yowl plays at least, even for the shortest syllable
-release = 0.15  # s it fades out over when your syllable ends
+# Sassy: raspy yowls that go wherever your voice goes.
+pitch_follow = 0.5  # yowl semitones per semitone you go above or below your usual pitch
+jitter = 0.3  # semitones of random pitch per yowl (it goes up or down 2 at most in all)
+gap = 1.0  # s it stays quiet after a yowl before the next can start (up to 1.5 times that)

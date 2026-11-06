@@ -1,6 +1,5 @@
 # How Gingersnap's mrrps follow your voice (see Style in catcam/voice.py).
-# Snappy: short "mrrp?"s, clipped as soon as your syllable ends.
-pitch_follow = 0.8  # mrrp semitones per semitone you go above or below your usual pitch
-jitter = 0.4  # semitones of random pitch per mrrp
-shortest = 0.1  # s a mrrp plays at least, even for the shortest syllable
-release = 0.04  # s it fades out over when your syllable ends
+# Snappy: quick "mrrp?"s that keep interrupting you.
+pitch_follow = 0.4  # mrrp semitones per semitone you go above or below your usual pitch
+jitter = 0.35  # semitones of random pitch per mrrp (it goes up or down 2 at most in all)
+gap = 0.5  # s it stays quiet after a mrrp before the next can start (up to 1.5 times that)

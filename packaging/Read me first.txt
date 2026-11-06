@@ -46,9 +46,9 @@ USE
 - Turn on "Background" (or press B) and pick a picture or video to put
   behind the animal. Turn it off and on again to pick another.
 - With BlackHole installed, choose "BlackHole 2ch" as the microphone in
-  Zoom (Settings > Audio > Microphone): the call hears your animal's sound
-  for every syllable you say, never your voice. Woofgang barks, and every
-  cat has its own voice: trills, mews, meows, grumbles or yowls.
+  Zoom (Settings > Audio > Microphone): the call hears your animal talking
+  along while you talk, never your voice. Woofgang barks, and every cat has
+  its own voice: trills, mews, meows, grumbles or yowls.
 - "Voice" (or V) is on to begin with. Turn it off for the call to hear
   your own voice through BlackHole, and on again for the animal's.
 - Sit still and quiet for a few seconds and your animal breathes and looks

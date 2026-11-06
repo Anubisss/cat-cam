@@ -9,8 +9,8 @@ the side of its head that turns away from the light falls into shadow. Your
 hands become its paws, toe by toe: the top of the paw when you show the back of
 your hand, the toe beans when you show your palm. When you talk, the call
 hears your animal instead of your voice: Woofgang barks, and every cat has a
-voice of its own, from Grinbert's chirpy trills to Grumbledore's deep old
-grumbles. When you sit still, your animal
+voice of its own, from Grinbert's chirpy trills to Grumbledore's slow old
+grumbles, all real animals. When you sit still, your animal
 breathes and looks around on its own. And you can put any picture or video
 behind it.
 
@@ -129,11 +129,13 @@ Turn on **Background** (or press `b`) and pick a picture or a video: it goes
 behind the animal, in place of the plain backdrop. A video plays on a loop.
 Turn it off and on again to pick another.
 
-When you talk (and BlackHole is set up, see above), every syllable you say
-comes out as your animal's sound, as loud and as high or low as you said it:
-Woofgang barks, Grinbert trills, Pleadwell mews softly and pleadingly,
-Meringue meows long and bored, Grumpkin grumbles, Wrinklestiltskin yowls
-with a rasp, Gingersnap goes "mrrp?" and Grumbledore grumbles deep and slow.
+When you talk (and BlackHole is set up, see above), your animal talks along,
+as loud as you are: Woofgang barks with almost every syllable, and a cat
+answers with a whole meow now and then, a few times a sentence. Grinbert
+trills, Pleadwell mews like a kitten, Meringue meows long and bored, Grumpkin
+grumbles for its food, Wrinklestiltskin yowls with a rasp, Gingersnap goes
+"mrrp?" and Grumbledore grumbles slow and old. They are recordings of real
+cats and a real dog, played as they are.
 Turn off **Voice** (or press `v`) for the call to hear your own voice
 instead, and on again for the animal's. When you sit still and quiet for a
 few seconds, your animal breathes, sways and looks around on its own, until
@@ -218,9 +220,11 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
    Mac or with Meshy: see [docs/3d-heads.md](docs/3d-heads.md). A cat that
    only exists as a Meshy model gets its portrait rendered from the model.
 5. Optionally give it a voice: a few short sounds (`.ogg`, `.wav`, `.flac`
-   or `.mp3`) in `assets/cats/<Name>/voice/`, one played per syllable, and a
-   `voice.toml` next to them for how they follow your voice (copy one from
-   another cat). Without sounds, the call hears your own voice.
+   or `.mp3`) in `assets/cats/<Name>/voice/`, each a single real meow (or
+   bark) with a little quiet around it, and a `voice.toml` next to them for
+   how they follow your voice (copy one from another cat).
+   `tools/cat_voices.py` cuts them out of CC0 recordings from Freesound. Without
+   sounds, the call hears your own voice.
 
 ## Tuning
 
@@ -239,8 +243,8 @@ These constants sit at the top of their files:
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
 | `JAW_HINGE`, `OWN_JAW_MAX` | `catcam/head3d.py` | where a 3D head's own jaw swings from, and how far it opens |
 | `STILL_AFTER`, `BREATHING`, `SWAY`, `LOOK` | `catcam/idle.py` | how long you must be still before he acts on his own, his breathing, his sway, and how far he looks around |
-| `ABOVE_NOISE`, `MIN_GAP`, `PITCH_FOLLOW` | `catcam/voice.py` | how loud you must talk to bark, the shortest time between barks, and how much the bark's pitch follows yours |
-| `pitch_follow`, `jitter`, `shortest`, `release` | `assets/cats/<Name>/voice/voice.toml` | per animal: how much its sounds' pitch follows yours, how much it varies, and how long a sound plays at least and fades out after your syllable |
+| `ABOVE_NOISE`, `GAIN`, `PITCH_LIMIT` | `catcam/voice.py` | how loud you must talk for your animal to answer, how loud it answers, and how far its sounds' pitch may move from the recording |
+| `pitch_follow`, `jitter`, `gap` | `assets/cats/<Name>/voice/voice.toml` | per animal: how much its sounds' pitch follows yours, how much it varies, and how long it stays quiet after a sound before the next |
 | `SIZE`, `CENTRE`, `DURATION` | `catcam/reactions.py` | how big the emoji reactions are, where they sit and how long they stay |
 
 ## How it works
@@ -277,8 +281,9 @@ These constants sit at the top of their files:
    top, from the Mac's emoji font (`catcam/reactions.py`).
 8. The frame goes to the OBS virtual camera through pyvirtualcam. Your
    microphone goes through `catcam/voice.py`, which finds the syllables in
-   your loudness and plays one of the animal's sounds for each (a bark, a
-   meow, a trill...), out to the BlackHole virtual microphone. An animal's
+   your loudness and starts one of the animal's sounds (a bark, a meow, a
+   trill...) with a syllable, plays it to its end and waits a moment before
+   the next, out to the BlackHole virtual microphone. An animal's
    `voice/voice.toml` says how its sounds follow your voice.
 
 ## Development
@@ -329,26 +334,23 @@ docs/3d-heads.md   how to make a 3D head
 tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet, the mouth model;
                    tracking_eval.py measures face tracking on recorded webcam clips;
                    frame_bench.py measures frame times, every animal, no one at the camera;
-                   cat_voices.py makes the cats' voices from CC0 recordings
+                   cat_voices.py makes the animals' voices from CC0 recordings
 models/            MediaPipe face and hand models
 packaging/         the standalone macOS app: PyInstaller spec, icon, build script
 ```
 
 The MediaPipe models in `models/` are by Google and licensed under Apache 2.0.
-Woofgang's bark (`assets/cats/Woofgang/voice/bark.ogg`) is CC0: a recording by
-Geoff-Bremner-Audio on [Freesound](https://freesound.org/s/688201/), as cleaned
-up for [Space Station 14](https://github.com/space-wizards/space-station-14).
-
-The cats' voices (`assets/cats/<Name>/voice/*.ogg`) are made by
+The animals' voices (`assets/cats/<Name>/voice/*.ogg`) are made by
 `tools/cat_voices.py` from these Freesound recordings, all CC0 (public
-domain), cut into single meows and changed in pitch, speed and tone:
+domain), cut into single meows (or barks) and otherwise left as recorded:
 
-| Cat | Recordings |
-|-----|------------|
-| Grinbert | ["Cat Meow.aif"](https://freesound.org/s/455493/) by Wrenasmir, ["Cat Politely Meowing"](https://freesound.org/s/669532/) by HECKFRICKER, ["cat chirp.wav"](https://freesound.org/s/451250/) by dreamstobecome |
-| Pleadwell | ["Cat Politely Meowing"](https://freesound.org/s/669532/) by HECKFRICKER, ["meow-1.wav"](https://freesound.org/s/686775/) by nathan-osman, ["Begging Meow"](https://freesound.org/s/732521/) by Lukey1028, ["Kitten mewing / young baby cat meowing"](https://freesound.org/s/735643/) by XxTamisxx |
-| Meringue | ["Cat, Meows 3x"](https://freesound.org/s/741166/) by Kinoton, ["cat meow short"](https://freesound.org/s/412017/) by skymary, ["Cat Meow"](https://freesound.org/s/381783/) by ghostlung |
-| Grumpkin | ["AnnoyedCatMeowsGruntsVowels.wav"](https://freesound.org/s/541264/) by sweet_niche |
-| Wrinklestiltskin | ["Siamese Cat Yowls"](https://freesound.org/s/826683/) by tcurless, ["Cat meowing raspy"](https://freesound.org/s/757185/) by HenKonen |
-| Gingersnap | ["AnnoyedCatMeowsGruntsVowels.wav"](https://freesound.org/s/541264/) by sweet_niche, ["Pearl mmrrovvv sound"](https://freesound.org/s/844502/) by Sadiquecat |
-| Grumbledore | ["Old cat meowing"](https://freesound.org/s/338819/) by cabled_mess, ["Coco meow 17 year old cat"](https://freesound.org/s/724090/) by FreqWincy |
+| Animal | Recordings |
+|--------|------------|
+| Woofgang | ["Animal - Dog, Retriever (Teen)"](https://freesound.org/s/146343/) by colinpoh |
+| Grinbert | ["Cat trilling"](https://freesound.org/s/200336/) by jsbarrett |
+| Pleadwell | ["Kitten Meowing.wav"](https://freesound.org/s/196251/) by lolamadeus, ["kittens meowing"](https://freesound.org/s/149191/) by videog |
+| Meringue | ["Cat meowing x5"](https://freesound.org/s/214759/) by peridactyloptrix |
+| Grumpkin | ["Cat Wants Food"](https://freesound.org/s/120160/) by Oneirophile |
+| Wrinklestiltskin | ["Cat meowing raspy"](https://freesound.org/s/757185/) by HenKonen |
+| Gingersnap | ["AnnoyedCatMeowsGruntsVowels.wav"](https://freesound.org/s/541264/) by sweet_niche |
+| Grumbledore | ["Old cat meowing"](https://freesound.org/s/338819/) by cabled_mess |
