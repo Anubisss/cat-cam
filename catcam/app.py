@@ -135,12 +135,14 @@ def load_cats(renderer: Renderer) -> list[Cat]:
     for name in names:
         a = cat_assets.load(name)
         mesh = CatMesh(renderer, a.sprite, a.points, a.background, snap=not a.mouth_set)
+        eyelids = CatFace(a.sprite, a.points[:, :2])
         cats.append(Cat(
             name=name,
             points=a.points,
-            eyelids=CatFace(a.sprite, a.points[:, :2]),
+            eyelids=eyelids,
             mesh=mesh,
-            head3d=Head3D(renderer, name, mesh, a.sprite, a.points, a.background) if has_head(name) else None,
+            head3d=Head3D(renderer, name, mesh, a.sprite, a.points, a.background, eyelids.lid_box())
+            if has_head(name) else None,
             paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
             tail=tail_skin(a.paws),
             sounds=a.sounds,

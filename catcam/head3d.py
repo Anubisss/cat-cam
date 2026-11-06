@@ -54,6 +54,7 @@ JAW_HINGE = (0.0, 0.1, -1.35)
 OWN_JAW_MAX = 0.5
 MOUTH_BOX = 0.3  # how far round the jaw (shares of its size on screen) the head's inside may show
 OWN_MOUTH_INSIDE = (0.16, 0.06, 0.06)  # RGB of a head's own inside, seen between its parted lips
+LID_REACH = 2  # portrait px: texels sampled this close to where the lids are drawn take part in blinks
 
 # The head is shaped here, on the GPU, as Head3D._shape does it on the CPU: with a few
 # hundred thousand vertices that would take most of a frame. Each vertex follows its
@@ -346,10 +347,11 @@ def mouth_frame(landmarks, facing):
 
 class Head3D:
     def __init__(self, renderer: Renderer, name: str, flat: CatMesh, sprite: np.ndarray,
-                 points: np.ndarray, bg_color):
+                 points: np.ndarray, bg_color, lids: tuple[int, int, int, int] | None = None):
         """flat: the same cat's CatMesh, whose expression smoothing and mouth this
         head shares; sprite: its open-eyed portrait (BGRA); points: its landmarks;
-        bg_color: BGR."""
+        bg_color: BGR; lids: the part of the portrait blinking redraws (x0, y0, x1, y1,
+        see CatFace.lid_box), None if not known."""
         mesh_file, texture_file = files(name)
         mesh = np.load(mesh_file)
         self.renderer, self.flat, self.open_sprite = renderer, flat, sprite
@@ -475,32 +477,52 @@ class Head3D:
             ctx.buffer(parts.faces.astype("i4").tobytes()))
 
         # Blinks: the eye areas were painted from the portrait, so they repaint from its
-        # eyelid-drawn versions.
+        # eyelid-drawn versions. Only the texels taken from where the lids are drawn can
+        # change, so only those are repainted, in the texture as uploaded (bottom row
+        # first, as OpenGL has it, and with a 4th channel, which uploads several times
+        # faster), and only the rows they lie in go up again.
         self.base = cv2.imread(str(texture_file))
-        self.eye_index, self.eye_px = mesh["eye_index"], mesh["eye_px"]
-        self.eye_weight = mesh["eye_weight"][:, None]
-        self.eye_open = sample(sprite[..., :3].astype(np.float32), self.eye_px)
-        self.eye_base = self.base.reshape(-1, 3)[self.eye_index].astype(np.float32)
-        self.texture = ctx.texture(self.base.shape[1::-1], 3)
+        self.painted = np.ascontiguousarray(cv2.cvtColor(self.base, cv2.COLOR_BGR2BGRA)[::-1])
+        tex_h, tex_w = self.base.shape[:2]
+        eye_index, eye_px = mesh["eye_index"], mesh["eye_px"].astype(np.float32)
+        if lids is None:
+            lids = (0, 0, *sprite.shape[1::-1])
+        x0, y0, x1, y1 = lids
+        lo, hi = np.array([x0, y0]) - LID_REACH, np.array([x1, y1]) + LID_REACH
+        lid = np.all((eye_px >= lo) & (eye_px < hi), axis=1)
+        rows, cols = np.divmod(eye_index[lid], tex_w)
+        self.lid_texels = (tex_h - 1 - rows) * tex_w + cols
+        # The portrait around the lids, and where in it each of their texels comes from.
+        h, w = sprite.shape[:2]
+        crop = max(x0 - 2 * LID_REACH, 0), max(y0 - 2 * LID_REACH, 0)
+        self.lid_crop = np.s_[crop[1]:min(y1 + 2 * LID_REACH, h), crop[0]:min(x1 + 2 * LID_REACH, w), :3]
+        self.lid_px = eye_px[lid] - np.array(crop, np.float32)
+        self.lid_weight = mesh["eye_weight"][lid, None]
+        self.lid_open = sample(sprite[..., :3].astype(np.float32), eye_px[lid])
+        self.lid_base = self.base.reshape(-1, 3)[eye_index[lid]]
+        self.lid_rows = (tex_h - 1 - rows.max(), tex_h - rows.min()) if lid.any() else None
+        self.texture = ctx.texture((tex_w, tex_h), 4, self.painted)  # BGR(A) like the rest of the app
         self.texture.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
         self.texture.anisotropy = 8.0
-        self._uploaded = None
+        self.texture.build_mipmaps()
+        self._uploaded = sprite
 
     def face_on_screen(self):
         """Screen position of the cat's face center and its width in screen px."""
         return self.face_centre, self.face_width
 
     def _upload(self, sprite: np.ndarray):
-        texture = self.base
-        if sprite is not self.open_sprite:
-            texture = self.base.copy()
-            flat = texture.reshape(-1, 3)
-            closed = sample(np.ascontiguousarray(sprite[..., :3]), self.eye_px).astype(np.float32)
-            eyes = self.eye_base + self.eye_weight * (closed - self.eye_open)
-            flat[self.eye_index] = np.clip(eyes, 0, 255).astype(np.uint8)
-        # BGR like the rest of the app; OpenGL's first row is the bottom one.
-        self.texture.write(np.ascontiguousarray(texture[::-1]).tobytes())
-        self.texture.build_mipmaps()
+        if self.lid_rows is not None:
+            texels = self.painted.reshape(-1, 4)
+            if sprite is self.open_sprite:
+                texels[self.lid_texels, :3] = self.lid_base
+            else:
+                closed = sample(np.ascontiguousarray(sprite[self.lid_crop]), self.lid_px).astype(np.float32)
+                eyes = self.lid_base + self.lid_weight * (closed - self.lid_open)
+                texels[self.lid_texels, :3] = np.clip(eyes, 0, 255).astype(np.uint8)
+            y0, y1 = self.lid_rows
+            self.texture.write(self.painted[y0:y1], viewport=(0, y0, self.painted.shape[1], y1 - y0))
+            self.texture.build_mipmaps()
         self._uploaded = sprite
 
     def _part(self, rows) -> "_Part":

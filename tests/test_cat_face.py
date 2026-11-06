@@ -51,3 +51,14 @@ def test_snapped_eyes_stay_near_the_landmarks(real_cats):
             assert np.abs(lower - cat.points[lo_idx, :2]).max() <= limit, cat.name
             # Still an open eye (or a squint, at least not shut past itself).
             assert (lower[1:-1, 1] >= _sample(upper, lower[1:-1, 0]) - 1e-6).all(), cat.name
+
+
+def test_blinks_stay_in_the_lid_box(real_cats):
+    for cat in real_cats:
+        face = CatFace(cat.sprite, cat.points[:, :2])
+        x0, y0, x1, y1 = face.lid_box()
+        for blink in [(0.1, 0.1), (0.5, 1.0), (1.0, 0.3), (1.0, 1.0)]:
+            changed = (face.render(blink) != cat.sprite).any(axis=2)
+            assert changed.any(), cat.name
+            changed[y0:y1, x0:x1] = False
+            assert not changed.any(), cat.name

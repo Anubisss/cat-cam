@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from catcam import cats, head3d
+from catcam.cat_face import CatFace
 from catcam.cat_mesh import CHIN_LINE, TOP_MARGIN, CatMesh, Renderer
 from catcam.head_pose import to_matrix
 
@@ -121,3 +122,21 @@ def test_own_jaw_opens_between_the_lips(woofgang):
     assert inside(opened) > inside(closed) + 0.002 * OUT[0] * OUT[1]
     top = OUT[1] // 2  # eyes and nose
     assert np.array_equal(opened[:top], closed[:top])
+
+
+def test_blinks_repaint_the_eyes_and_open_again(woofgang):
+    """Only the texels near the lids are repainted while blinking, and opening the eyes
+    puts back exactly what was there."""
+    renderer = Renderer(OUT)
+    flat = CatMesh(renderer, woofgang.sprite, woofgang.points, BG)
+    eyelids = CatFace(woofgang.sprite, woofgang.points[:, :2])
+    head = head3d.Head3D(renderer, "Woofgang", flat, woofgang.sprite, woofgang.points, BG, eyelids.lid_box())
+    still = np.zeros((478, 3))
+    painted = head.painted.copy()
+    rest = head.render(woofgang.sprite, still, np.eye(3)).copy()
+    closed = head.render(eyelids.render((1.0, 1.0)), still, np.eye(3)).copy()
+    changed = np.nonzero((head.painted != painted).any(axis=2).ravel())[0]
+    assert len(changed) and np.isin(changed, head.lid_texels).all()
+    assert (closed != rest).any()
+    assert np.array_equal(head.render(woofgang.sprite, still, np.eye(3)), rest)
+    assert np.array_equal(head.painted, painted)

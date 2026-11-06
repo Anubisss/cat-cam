@@ -139,15 +139,27 @@ class CatFace:
                 self._close_lid(out, upper, lower, amount)
         return out
 
-    def _close_lid(self, out: np.ndarray, upper, lower, amount: float):
-        """Redraw the region around one eye with its upper lid lowered."""
+    def lid_box(self) -> tuple[int, int, int, int]:
+        """(x0, y0, x1, y1), the ends exclusive: the part of the sprite that closing
+        the eyes may redraw (a lid lowered further only reaches further down)."""
+        lids = [self._lid(upper, lower, 1.0) for upper, lower in self.eyes]
+        boxes = np.array([lid[:4] for lid in lids if lid is not None]).reshape(-1, 4)
+        if not len(boxes):
+            return 0, 0, 0, 0
+        return (int(boxes[:, 0].min()), int(boxes[:, 1].min()),
+                int(boxes[:, 2].max()), int(boxes[:, 3].max()))
+
+    def _lid(self, upper, lower, amount: float):
+        """Where one eye's lid is drawn: its box in the sprite (x0, y0, x1, y1, the
+        ends exclusive), the box's columns (xs) and, per column, the top of the skin
+        that slides down, the lid's edge and the skin's height. None if off the sprite."""
         h, w = self.sprite.shape[:2]
         left, right = upper[:, 0].min(), upper[:, 0].max()
         reach = CORNER_REACH * (right - left)
         x0 = max(int(np.floor(left - reach)), 0)
         x1 = min(int(np.ceil(right + reach)) + 1, w)
         if x1 <= x0:  # eye outside the sprite
-            return
+            return None
         xs = np.arange(x0, x1, dtype=np.float32)
         lo = _sample(lower, xs)
         up = _sample(upper, xs)
@@ -163,7 +175,15 @@ class CatFace:
         y0 = max(int(np.floor(top.min())), 0)
         y1 = min(int(np.ceil(edge.max())) + 1, h)
         if y1 <= y0:
+            return None
+        return x0, y0, x1, y1, xs, top, edge, skin
+
+    def _close_lid(self, out: np.ndarray, upper, lower, amount: float):
+        """Redraw the region around one eye with its upper lid lowered."""
+        lid = self._lid(upper, lower, amount)
+        if lid is None:
             return
+        x0, y0, x1, y1, xs, top, edge, skin = lid
         y = np.arange(y0, y1, dtype=np.float32)[:, None]
         inside = (y >= top) & (y <= edge)
         # Stretch the skin band [top, up] down so it covers [top, edge].
