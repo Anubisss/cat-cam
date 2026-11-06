@@ -235,6 +235,34 @@ def test_preview_shows_the_voice_switch():
     assert np.abs(on.astype(int) - off).sum() > 0
 
 
+@pytest.mark.parametrize("head3d", [True, False])
+def test_the_controls_keep_to_the_corners_and_never_overlap(monkeypatch, head3d):
+    """With the longest name, every voice setup note, "Looking for your face", and
+    room for a fifth switch, nothing covers anything else or leaves the window."""
+    from catcam import blackhole
+    from catcam.paths import ASSETS
+
+    monkeypatch.setattr(app, "TOGGLES", app.TOGGLES + (("more", "Another", "m"),))
+    names = [p.name for p in ASSETS.iterdir() if p.is_dir()]
+    longest = max(names, key=lambda name: app.glass.text_width(name, app.NAME, 600, "rounded"))
+    states = {"tail": False, "background": False, "voice": True, "more": True} | (
+        {"head3d": True} if head3d else {})
+    width, height = SIZE
+    view = np.zeros((height, width, 3), np.uint8)
+    pill, bar, looking = app._switches(view, states), app._capsule(view, longest), app._looking(view)
+    assert pill[2] < width * 0.65 and bar[2] < width * 0.5  # small, and the animal has the middle
+    for stage in (blackhole.MISSING, blackhole.DOWNLOADING, blackhole.CHECKING, blackhole.OPENED,
+                  blackhole.FAILED, blackhole.WEBSITE, blackhole.RESTART):
+        chip = blackhole.VoiceSetup(stage).draw(view, width - app.MARGIN, height - app.MARGIN)
+        rects = [pill, bar, looking, chip]
+        for x, y, w, h in rects:
+            assert 0 < x and x + w < width and 0 < y and y + h < height, stage
+        for i, (ax, ay, aw, ah) in enumerate(rects):
+            for bx, by, bw, bh in rects[i + 1:]:
+                apart = ax + aw + 8 <= bx or bx + bw + 8 <= ax or ay + ah + 8 <= by or by + bh + 8 <= ay
+                assert apart, (stage, (ax, ay, aw, ah), (bx, by, bw, bh))
+
+
 def test_no_head3d_switch_without_a_3d_head():
     assert set(toggle_rects(False)) == {"tail", "background", "voice"}
     controls, state = _controls(), _State()

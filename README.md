@@ -75,7 +75,7 @@ The rest of this page is for running it from the code instead.
    made by [Existential Audio](https://existential.audio/blackhole/). No
    Terminal needed:
    1. Start Cat Cam (see below). Without BlackHole, its window shows a
-      **Get the voice** button under the Voice switch. Click it: Cat Cam
+      **Get the voice** button in its bottom right corner. Click it: Cat Cam
       downloads BlackHole's installer from its makers' site, checks it is
       really theirs, and opens it in Apple's installer.
    2. Click through the installer. It asks for your Mac's password, as it

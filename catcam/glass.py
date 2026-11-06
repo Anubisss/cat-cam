@@ -178,7 +178,7 @@ def ring(view, x: int, y: int, w: int, h: int, radius: int, color, width: int = 
     paint(view, np.clip(outer - np.pad(rounded_mask(w, h, radius), width), 0, 1), x - width, y - width, color)
 
 
-SWITCH = (38, 22)  # w, h of a toggle switch
+SWITCH = (28, 16)  # w, h of a toggle switch (px)
 
 
 def switch(view, x: int, y: int, on: bool):
@@ -192,17 +192,34 @@ def switch(view, x: int, y: int, on: bool):
     knob = h - 4
     kx = x + (w - knob - 2 if on else 2)
     disc = rounded_mask(knob, knob, knob // 2)
-    paint(view, cv2.GaussianBlur(np.pad(disc, 3), (0, 0), 1.5), kx - 3, y + 3, (0, 0, 0), 0.35)
+    paint(view, cv2.GaussianBlur(np.pad(disc, 3), (0, 0), 1.0), kx - 3, y, (0, 0, 0), 0.35)  # 1 px below
     paint(view, disc, kx, y + 2, WHITE)
 
 
-def keycap(view, x: int, y: int, key: str, size: int = 20) -> int:
-    """A small key with key on it, top left at (x, y); returns its width."""
-    w = max(size, text_width(key, 12, 600) + 10)
-    paint(view, rounded_mask(w, size, 5), x, y, WHITE, 0.16)
-    paint(view, _outline(w, size, 5), x, y, WHITE, 0.35)
-    text(view, key, x + w / 2, y + size * 0.72, 12, WHITE, 600, align="center")
+def keycap_width(key: str, size: int = 20, font: int = 12) -> int:
+    """How wide keycap draws key."""
+    return max(size, text_width(key, font, 600) + size // 2)
+
+
+def keycap(view, x: int, y: int, key: str, size: int = 20, font: int = 12) -> int:
+    """A small key size px high with key on it in font px type, top left at
+    (x, y); returns its width."""
+    w, radius = keycap_width(key, size, font), size // 4
+    paint(view, rounded_mask(w, size, radius), x, y, WHITE, 0.16)
+    paint(view, _outline(w, size, radius), x, y, WHITE, 0.35)
+    text(view, key, x + w / 2, y + size * 0.72, font, WHITE, 600, align="center")
     return w
+
+
+def chip(view, s: str, right: int, top: int, height: int, size: int, color=WHITE,
+         weight: int = 500) -> tuple[int, int, int, int]:
+    """A glass chip with one line of text on it, its right edge at x = right and its
+    top at y = top; returns its (x, y, w, h)."""
+    w = text_width(s, size, weight) + height  # half its height of room either side
+    x = right - w
+    panel(view, x, top, w, height, height // 2)
+    text(view, s, x + height / 2, top + height / 2 + size * 0.36, size, color, weight)
+    return x, top, w, height
 
 
 def dot(view, cx: int, cy: int, r: int, color):

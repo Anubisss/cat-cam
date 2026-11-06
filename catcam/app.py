@@ -30,7 +30,7 @@ from mediapipe.tasks.python import BaseOptions, vision
 from catcam import cats as cat_assets
 from catcam import glass, paw3d
 from catcam.background import Background, Chooser, behind
-from catcam.blackhole import GAP_BELOW, VoiceSetup
+from catcam.blackhole import VoiceSetup
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.ears import EarMotion
@@ -65,10 +65,19 @@ WINDOW = "Cat Cam"
 # call hear your own voice.
 TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"), ("background", "Background", "b"),
            ("voice", "Voice", "v"))
-PILL = (16, 16, 44)  # the pill's x, y and height (preview px)
-CAPSULE = (44, 16)  # the bottom capsule's height and its gap to the window's edge
-# Keys shown in the bottom capsule (the switches show their own).
+# Keys shown in the bar in the bottom left corner (the switches show their own).
 KEY_HINTS = (("c", "Change cat"), ("1-8", "Reactions"), ("n", "Neutral face"), ("q", "Quit"))
+# The preview's controls are small and keep to the corners, so the animal has
+# the window: the switches top left, your animal's name and the keys bottom
+# left, the voice setup (catcam.blackhole) bottom right and "Looking for your
+# face" top right. All in preview px: the window is a fixed 960 x 540
+# (catcam.picker.SIZE), so these are fixed shares of it.
+MARGIN = 10  # the controls' distance from the window's edges
+PILL_H = 30  # height of the switches' pill (each switch is clickable over its full height)
+LABEL = 12  # text size of the switches' labels and of the corner notes
+KEYCAP = (15, 10)  # height of a key, and its letter's size
+BAR_H = 26  # height of the bar with the name and keys, and of the corner notes
+NAME, HINT = 13, 11  # text sizes of your animal's name and of what the keys do
 
 EXPRESSION_GAIN = 1.3  # exaggerate your expressions on the cat (1 = 1:1)
 # The cat's lids close as fast as your eyes (a blink can be a single frame)
@@ -310,13 +319,13 @@ def render(cat: Cat, state: FaceState, paws: Paws, tail: Tail, tail_hand: str | 
 def toggle_rects(head3d: bool = True) -> dict[str, tuple[int, int, int, int]]:
     """Each switch's area in the pill (x, y, w, h, preview px); head3d: whether the
     cat has a 3D head, else its switch is left out."""
-    x, y, h = PILL
-    rects, x = {}, x + 6
-    for name, label, _ in TOGGLES:
+    rects, x = {}, MARGIN + 4
+    for name, label, key in TOGGLES:
         if name == "head3d" and not head3d:
             continue
-        w = 10 + glass.SWITCH[0] + 10 + glass.text_width(label, 15, 500) + 10 + 20 + 10
-        rects[name] = (x, y, w, h)
+        w = 8 + glass.SWITCH[0] + 6 + glass.text_width(label, LABEL, 500) + 5 \
+            + glass.keycap_width(key, *KEYCAP) + 8
+        rects[name] = (x, MARGIN, w, PILL_H)
         x += w
     return rects
 
@@ -329,39 +338,50 @@ def toggle_at(x: int, y: int, head3d: bool) -> str | None:
     return None
 
 
-def _switches(view: np.ndarray, states: dict[str, bool]):
+def _switches(view: np.ndarray, states: dict[str, bool]) -> tuple[int, int, int, int]:
+    """The pill of switches in the top left corner; returns its (x, y, w, h)."""
     rects = toggle_rects("head3d" in states)
-    x, y, h = PILL
-    right = max(rx + w for rx, _, w, _ in rects.values()) + 6
-    glass.panel(view, x, y, right - x, h, h // 2)
+    right = max(rx + w for rx, _, w, _ in rects.values()) + 4
+    glass.panel(view, MARGIN, MARGIN, right - MARGIN, PILL_H, PILL_H // 2)
+    cap_h, cap_font = KEYCAP
     for name, label, key in TOGGLES:
         if name not in rects:
             continue
-        rx, ry, _, _ = rects[name]
-        glass.switch(view, rx + 10, ry + (h - glass.SWITCH[1]) // 2, states[name])
-        tx = rx + 10 + glass.SWITCH[0] + 10
-        glass.text(view, label, tx, ry + h / 2 + 5, 15, weight=500)
-        glass.keycap(view, tx + glass.text_width(label, 15, 500) + 10, ry + (h - 20) // 2, key)
+        rx, ry, _, h = rects[name]
+        glass.switch(view, rx + 8, ry + (h - glass.SWITCH[1]) // 2, states[name])
+        tx = rx + 8 + glass.SWITCH[0] + 6
+        glass.text(view, label, tx, ry + h / 2 + LABEL * 0.36, LABEL, weight=500)
+        glass.keycap(view, tx + glass.text_width(label, LABEL, 500) + 5, ry + (h - cap_h) // 2, key,
+                     cap_h, cap_font)
+    return MARGIN, MARGIN, right - MARGIN, PILL_H
 
 
-def _capsule(view: np.ndarray, name: str):
-    """The bottom capsule: who you are, and the keys."""
-    w, h = PREVIEW_SIZE
-    height, gap = CAPSULE
-    name_w = glass.text_width(name, 17, 600, "rounded")
-    hint_w = [max(20, glass.text_width(key, 12, 600) + 10) + 8 + glass.text_width(label, 14)
-              for key, label in KEY_HINTS]  # keycap (as wide as glass.keycap makes it), gap, label
-    width = 22 + name_w + 18 + 1 + 18 + sum(hint_w) + 18 * (len(KEY_HINTS) - 1) + 22
-    x, y = (w - width) // 2, h - gap - height
-    glass.panel(view, x, y, width, height, height // 2)
-    glass.text(view, name, x + 22, y + height / 2 + 6, 17, weight=600, family="rounded")
-    divider = x + 22 + name_w + 18
-    glass.paint(view, np.ones((height - 20, 1), np.float32), divider, y + 10, glass.WHITE, 0.3)
-    hx = divider + 1 + 18
+def _capsule(view: np.ndarray, name: str) -> tuple[int, int, int, int]:
+    """The bar in the bottom left corner: who you are, and the keys; returns its (x, y, w, h)."""
+    cap_h, cap_font = KEYCAP
+    name_w = glass.text_width(name, NAME, 600, "rounded")
+    hint_w = [glass.keycap_width(key, cap_h, cap_font) + 4 + glass.text_width(label, HINT)
+              for key, label in KEY_HINTS]
+    pad, gap = BAR_H // 2, 10  # room at the ends, and between the hints
+    width = pad + name_w + gap + 1 + gap + sum(hint_w) + gap * (len(KEY_HINTS) - 1) + pad
+    x, y = MARGIN, PREVIEW_SIZE[1] - MARGIN - BAR_H
+    glass.panel(view, x, y, width, BAR_H, BAR_H // 2)
+    glass.text(view, name, x + pad, y + BAR_H / 2 + NAME * 0.36, NAME, weight=600, family="rounded")
+    divider = x + pad + name_w + gap
+    glass.paint(view, np.ones((BAR_H - 12, 1), np.float32), divider, y + 6, glass.WHITE, 0.3)
+    hx = divider + 1 + gap
     for (key, label), hw in zip(KEY_HINTS, hint_w):
-        cap_w = glass.keycap(view, hx, y + (height - 20) // 2, key)
-        glass.text(view, label, hx + cap_w + 8, y + height / 2 + 5, 14, glass.MUTED)
-        hx += hw + 18
+        cap_w = glass.keycap(view, hx, y + (BAR_H - cap_h) // 2, key, cap_h, cap_font)
+        glass.text(view, label, hx + cap_w + 4, y + BAR_H / 2 + HINT * 0.36, HINT, glass.MUTED)
+        hx += hw + gap
+    return x, y, width, BAR_H
+
+
+def _looking(view: np.ndarray) -> tuple[int, int, int, int]:
+    """"Looking for your face" in the top right corner, level with the switches;
+    returns its (x, y, w, h)."""
+    top = MARGIN + (PILL_H - BAR_H) // 2
+    return glass.chip(view, "Looking for your face", PREVIEW_SIZE[0] - MARGIN, top, BAR_H, LABEL)
 
 
 def _message(view: np.ndarray, lines: list[str], y: int):
@@ -380,18 +400,18 @@ def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None =
             voice: bool = True, voice_setup: VoiceSetup | None = None) -> np.ndarray:
     """Mirrored like a mirror, with the switches and hints on glass, none of which
     reach the call. head3d: whether the 3D head is on; None leaves its switch out
-    (the cat has none). voice_setup: the "Get the voice" button, under the Voice
-    switch, for a Mac without BlackHole."""
+    (the cat has none). voice_setup: the "Get the voice" button, in the bottom
+    right corner, for a Mac without BlackHole."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
     states = ({"tail": tail} | ({} if head3d is None else {"head3d": head3d})
               | {"background": background, "voice": voice})
+    width, height = PREVIEW_SIZE
     _switches(view, states)
     if voice_setup is not None:
-        x, y, w, h = toggle_rects(head3d is not None)["voice"]
-        voice_setup.draw(view, x + w + 6, y + h + GAP_BELOW)
+        voice_setup.draw(view, width - MARGIN, height - MARGIN)
     _capsule(view, cat.name)
     if looking:
-        _message(view, ["Looking for your face"], PILL[1])
+        _looking(view)
     if notice:
         _message(view, notice, PREVIEW_SIZE[1] // 2 - 40)
     return view

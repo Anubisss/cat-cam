@@ -132,9 +132,9 @@ def test_signed_by_without_pkgutil(monkeypatch, tmp_path):
     assert blackhole.signed_by(tmp_path / "x.pkg") is None
 
 
-def _drawn(setup: VoiceSetup) -> np.ndarray:
+def _drawn(setup: VoiceSetup, now: float | None = None) -> np.ndarray:
     view = np.full((540, 960, 3), 120, np.uint8)
-    setup.draw(view, 630, 70)
+    setup.draw(view, 950, 530, now)
     return view
 
 
@@ -209,7 +209,7 @@ def test_what_shows_at_each_stage():
     assert not setup.click(480, 270)
 
 
-def test_the_download_bar_fills():
+def test_the_download_counts_up():
     setup = VoiceSetup(DOWNLOADING)
     setup.status = Status(DOWNLOADING, 0.1)
     some = _drawn(setup)
@@ -218,8 +218,28 @@ def test_the_download_bar_fills():
     assert np.any(some != more)
 
 
-def test_the_preview_shows_the_button_under_the_voice_switch(monkeypatch):
-    from catcam.app import Controls, Mouse, preview, toggle_rects
+@pytest.mark.parametrize("stage", [OPENED, WEBSITE])
+def test_the_note_shrinks_once_the_installer_has_been_open_a_while(stage):
+    setup = VoiceSetup(stage)
+    view = np.zeros((540, 960, 3), np.uint8)
+    first = setup.draw(view, 950, 530, now=100.0)
+    assert setup.draw(view, 950, 530, now=100.0 + blackhole.SHRINK_AFTER / 2) == first
+    later = setup.draw(view, 950, 530, now=100.0 + blackhole.SHRINK_AFTER + 1)
+    assert later[2] < first[2] and later[3] == first[3]  # narrower, as tall
+    setup.status = Status(RESTART)  # a new stage starts its own clock
+    assert setup.draw(view, 950, 530, now=200.0) is not None
+
+
+def test_every_note_is_one_short_line():
+    view = np.zeros((540, 960, 3), np.uint8)
+    for stage in (MISSING, DOWNLOADING, CHECKING, OPENED, FAILED, WEBSITE, RESTART):
+        x, y, w, h = VoiceSetup(stage).draw(view, 950, 530)
+        assert (x + w, y + h) == (950, 530), stage  # in the corner it was given
+        assert h == blackhole.CHIP_H and w < 960 * 0.35, stage
+
+
+def test_the_preview_shows_the_button_in_the_bottom_right_corner(monkeypatch):
+    from catcam.app import Controls, Mouse, preview
     from catcam.picker import Picker
 
     out = np.zeros((720, 1280, 3), np.uint8)
@@ -228,9 +248,8 @@ def test_the_preview_shows_the_button_under_the_voice_switch(monkeypatch):
     plain = preview(out, cat, False)
     with_button = preview(out, cat, False, voice_setup=setup)
     assert np.any(with_button != plain)
-    x, y, w, h = toggle_rects(False)["voice"]
     bx, by, bw, bh = setup.button
-    assert by > y + h and bx + bw <= x + w + 6  # below the Voice switch, not past its right end
+    assert bx > 960 * 0.75 and by > 540 * 0.85 and bx + bw < 960 and by + bh < 540
     ready = VoiceSetup(READY)
     assert np.array_equal(preview(out, cat, False, voice_setup=ready), plain)
 

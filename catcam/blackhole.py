@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.request
 from pathlib import Path
 from typing import NamedTuple
@@ -45,15 +46,14 @@ TIMEOUT = 20.0  # s to wait for the site to answer
 MAX_BYTES = 20_000_000  # bigger than this is not BlackHole's installer (0.7.1 is 103 KB)
 CHUNK = 16384  # bytes read at a time, for the progress
 
-# Drawing, in preview px.
-GAP_BELOW = 10  # between the switches' pill and this panel
-EDGE = 16  # the panel keeps at least this far from the window's left edge
-ROW = 44  # height of a one-row panel (as the switches' pill)
-LINE = 21  # line spacing of the text
-BUTTON_H = 30
+# Drawing: a small chip in the window's bottom right corner, in preview px.
+CHIP_H = 26  # height of the chip (as the bar with the keys)
+TEXT = 12  # its text size
+BUTTON_H = 20  # height of the honey button inside it
 INK = (32, 26, 20)  # BGR, the button's text on honey
+SHRINK_AFTER = 20.0  # s after the installer or web page opened, the chip only says what is left
 
-# Stages, and what the panel says at each.
+# Stages, and what the chip says at each.
 MISSING = "missing"  # no BlackHole: the button
 DOWNLOADING = "downloading"
 CHECKING = "checking"
@@ -63,16 +63,14 @@ WEBSITE = "website"  # the web page is open
 RESTART = "restart"  # installed, but macOS only loads it after a restart
 READY = "ready"  # BlackHole is there: nothing to show
 
-PROMPT = "For barks and meows in your calls:"
 BUTTON = "Get the voice"
-WEBSITE_BUTTON = "Open BlackHole's website"
-LINES = {
-    CHECKING: ["Checking the download…"],
-    OPENED: ["BlackHole's installer is open: click through it and enter your Mac's password.",
-             "Then restart your Mac and pick “BlackHole 2ch” as the microphone in Zoom."],
-    WEBSITE: ["Get “BlackHole 2ch” from the page that just opened and install it.",
-              "Then restart your Mac and pick it as the microphone in Zoom."],
-    RESTART: ["Restart your Mac to finish setting up the voice"],
+PROBLEM, WEBSITE_BUTTON = "Couldn't get BlackHole", "Website"  # what went wrong goes to the log
+LEFT_TO_DO = "Restart your Mac for the voice"
+NOTES = {
+    CHECKING: "Checking…",
+    OPENED: "Finish in the installer, then restart your Mac",
+    WEBSITE: "Install “BlackHole 2ch”, then restart your Mac",
+    RESTART: LEFT_TO_DO,
 }
 
 
@@ -159,6 +157,7 @@ class VoiceSetup:
         self.status = Status(stage)  # replaced whole, so the download's thread can set it
         self.button = None  # (x, y, w, h) of the button as last drawn, for clicks
         self._thread = None
+        self._shown = (None, 0.0)  # the stage last drawn, and since when (time.monotonic())
 
     @classmethod
     def for_this_mac(cls) -> "VoiceSetup":
@@ -206,53 +205,42 @@ class VoiceSetup:
     def _set(self, status: Status):
         self.status = status
 
-    def draw(self, view: np.ndarray, right: int, top: int):
-        """Draws the panel with its right edge at x = right, its top at y = top."""
+    def draw(self, view: np.ndarray, right: int, bottom: int,
+             now: float | None = None) -> tuple[int, int, int, int] | None:
+        """Draws the chip with its bottom right corner at (right, bottom); returns its
+        (x, y, w, h), or None with nothing to show. now: time.monotonic() by default."""
         status = self.status  # read once: the download's thread replaces it
+        now = time.monotonic() if now is None else now
+        if self._shown[0] != status.stage:
+            self._shown = (status.stage, now)
         self.button = None
+        top = bottom - CHIP_H
         if status.stage == READY:
-            return
-        if status.stage in (MISSING, FAILED):
-            label = BUTTON if status.stage == MISSING else WEBSITE_BUTTON
-            self._button_row(view, status.problem or PROMPT, label, right, top)
-        elif status.stage == DOWNLOADING:
-            self._progress(view, status.progress, right, top)
-        else:
-            _lines(view, LINES[status.stage], right, top)
+            return None
+        if status.stage == MISSING:
+            return self._button(view, "", BUTTON, right, top)
+        if status.stage == FAILED:
+            return self._button(view, PROBLEM, WEBSITE_BUTTON, right, top)
+        if status.stage == DOWNLOADING:
+            note = f"Downloading… {round(status.progress * 100)}%"
+            return glass.chip(view, note, right, top, CHIP_H, TEXT)
+        if status.stage in (OPENED, WEBSITE) and now - self._shown[1] > SHRINK_AFTER:
+            return glass.chip(view, LEFT_TO_DO, right, top, CHIP_H, TEXT, glass.MUTED)
+        return glass.chip(view, NOTES[status.stage], right, top, CHIP_H, TEXT)
 
-    def _button_row(self, view, prompt: str, label: str, right: int, top: int):
-        """Muted words, then a honey button."""
-        button_w = glass.text_width(label, 15, 600) + 32
-        width = 18 + glass.text_width(prompt, 14) + 12 + button_w + 7
-        x = max(right - width, EDGE)
-        glass.panel(view, x, top, width, ROW, ROW // 2)
-        glass.text(view, prompt, x + 18, top + ROW / 2 + 5, 14, glass.MUTED)
-        bx, by = x + width - 7 - button_w, top + (ROW - BUTTON_H) // 2
+    def _button(self, view, words: str, label: str, right: int, top: int) -> tuple[int, int, int, int]:
+        """Muted words, if any, then a honey button, on a glass chip."""
+        inset = (CHIP_H - BUTTON_H) // 2
+        button_w = glass.text_width(label, TEXT, 600) + BUTTON_H
+        lead = CHIP_H // 2 + glass.text_width(words, TEXT) + 8 if words else inset  # before the button
+        width = lead + button_w + inset
+        x = right - width
+        glass.panel(view, x, top, width, CHIP_H, CHIP_H // 2)
+        if words:
+            glass.text(view, words, x + CHIP_H // 2, top + CHIP_H / 2 + TEXT * 0.36, TEXT, glass.MUTED)
+        bx, by = x + lead, top + inset
         glass.paint(view, glass.rounded_mask(button_w, BUTTON_H, BUTTON_H // 2), bx, by, glass.HONEY)
-        glass.text(view, label, bx + button_w / 2, by + BUTTON_H / 2 + 5, 15, INK, 600, align="center")
+        glass.text(view, label, bx + button_w / 2, by + BUTTON_H / 2 + TEXT * 0.36, TEXT, INK, 600,
+                   align="center")
         self.button = (bx, by, button_w, BUTTON_H)
-
-    def _progress(self, view, share: float, right: int, top: int):
-        """Downloading, with a bar filling up."""
-        words = "Downloading BlackHole…"
-        bar_w = 120
-        width = 18 + glass.text_width(words, 14, 500) + 14 + bar_w + 18
-        x = max(right - width, EDGE)
-        glass.panel(view, x, top, width, ROW, ROW // 2)
-        glass.text(view, words, x + 18, top + ROW / 2 + 5, 14, weight=500)
-        bx, by = x + width - 18 - bar_w, top + ROW // 2 - 3
-        glass.paint(view, glass.rounded_mask(bar_w, 6, 3), bx, by, glass.WHITE, 0.22)
-        filled = int(round(bar_w * share))
-        if filled >= 6:
-            glass.paint(view, glass.rounded_mask(filled, 6, 3), bx, by, glass.HONEY)
-
-
-def _lines(view, lines: list[str], right: int, top: int):
-    """A glass panel with lines of text, its right edge at x = right."""
-    width = max(glass.text_width(line, 14, 500) for line in lines) + 36
-    height = ROW if len(lines) == 1 else 22 + LINE * len(lines)
-    x = max(right - width, EDGE)
-    glass.panel(view, x, top, width, height, min(height // 2, ROW // 2))
-    first = top + height / 2 + 5 - LINE * (len(lines) - 1) / 2
-    for i, line in enumerate(lines):
-        glass.text(view, line, x + 18, first + LINE * i, 14, glass.WHITE if i == 0 else glass.MUTED, 500)
+        return x, top, width, CHIP_H
