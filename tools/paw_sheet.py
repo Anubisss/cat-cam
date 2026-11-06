@@ -1,5 +1,6 @@
 """Renders animals with their paws up in the hand poses worth checking (open
-palms, backs of the hands, fists, a finger raised, fingers spread, a hand turned
+palms, backs of the hands, fists, a finger raised (the index; the middle alone, which
+stretches the middle toe), fingers spread, a hand turned
 edge-on and one tilted toward the camera), one row per animal, so paws can be
 looked over without a camera.
 
@@ -50,6 +51,7 @@ POSES = [  # label, then (palm, reach, spread, turn, tilt) for your right and le
     ("backs", (False, 2.0, 0, 0, 0), (False, 2.0, 0, 0, 0)),
     ("fists", (True, 0.8, 0, 0, 0), (False, 0.8, 0, 0, 0)),
     ("index up / half curled", (True, [2.0, 0.8, 0.8, 0.8], 0, 0, 0), (True, 1.3, 0, 0, 0)),
+    ("middle up alone", (True, [0.8, 2.0, 0.8, 0.8], 0, 0, 0), (False, [0.8, 2.0, 0.8, 0.8], 0, 0, 0)),
     ("spread", (True, 2.0, 0.25, 0, 0), (False, 2.0, 0.25, 0, 0)),
     ("turned / tilted", (True, 2.0, 0, 1.0, 0), (True, 2.0, 0, 0, 0.6)),
 ]

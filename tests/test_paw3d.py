@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 
@@ -73,12 +74,12 @@ def _paw(renderer, animal="cat", pad=(255, 0, 255)):
     return paw3d.Paw3D(renderer, paw3d.load(animal), colours)
 
 
-def _draw(paw, palm=True, curls=(0, 0, 0, 0), x=320, opacity=1.0):
+def _draw(paw, palm=True, curls=(0, 0, 0, 0), x=320, opacity=1.0, long_toe=0.0):
     """A left paw (unmirrored), upright at (x, 200), 120 px wide, on black."""
     across = (-1, 0, 0) if palm else (1, 0, 0)
     axes = hand_axes(_params(across, -1))
     frame = np.zeros((400, 640, 3), np.uint8)
-    return paw.render(frame, [Placement(x, 200, 120, axes, np.array(curls, float), opacity)])
+    return paw.render(frame, [Placement(x, 200, 120, axes, np.array(curls, float), opacity, long_toe)])
 
 
 def _pad_pixels(img):
@@ -122,6 +123,39 @@ def test_each_finger_curls_its_own_toe(renderer):
     right, left = slice(350, 385), slice(255, 295)  # the outer toes, a paw width being 120 px
     assert height(index, right) > height(open_paw, right) + 5
     assert abs(height(index, left) - height(open_paw, left)) <= 2
+
+
+@pytest.mark.gl
+@pytest.mark.parametrize("animal", ["cat", "dog"])
+@pytest.mark.parametrize("palm", [True, False])
+def test_the_long_middle_toe_grows_out_of_the_paw(renderer, animal, palm):
+    """The middle finger raised alone: the middle toe stands far taller, all in one piece
+    with the paw, while the curled toes beside it stay where they were."""
+    paw = _paw(renderer, animal)
+    curls = (1, 0, 1, 1)
+    long, plain = _draw(paw, palm, curls, long_toe=1.0), _draw(paw, palm, curls)
+    np.testing.assert_array_equal(_draw(paw, palm, curls, long_toe=0.0), plain)  # (a first draw can differ)
+
+    def top(img, columns=slice(None)):
+        return np.argwhere(img[:, columns].any(axis=2))[:, 0].min()
+
+    grown = paw3d.LONG_GROW * paw.model.toe_length * 120
+    assert top(long) < top(plain) - 0.7 * grown
+    tall = np.argwhere(long[: top(plain)].any(axis=2))[:, 1]
+    assert 0.2 * 120 < np.ptp(tall) < 0.6 * 120  # a toe, fattened, not a smear across the paw
+    # Its neighbours stay folded: beside it the paw's outline doesn't move.
+    for columns in (slice(255, tall.min() - 8), slice(tall.max() + 8, 385)):
+        assert columns.stop - columns.start > 15
+        assert abs(top(long, columns) - top(plain, columns)) <= 2
+    # No tearing: no more pinholes (pixels not drawn that can't be reached from outside
+    # the paw; the model has a few of its own) than without it, none up the long toe.
+    def holes(img):
+        outside = np.pad(1 - img.any(axis=2).astype(np.uint8), 1, constant_values=1)
+        cv2.floodFill(outside, None, (0, 0), 2)
+        return np.argwhere(outside == 1) - 1
+
+    assert len(holes(long)) <= len(holes(plain)) + 2
+    assert (holes(long)[:, 0] > top(plain) + 20).all()
 
 
 @pytest.mark.gl

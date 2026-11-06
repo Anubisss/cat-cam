@@ -10,7 +10,8 @@ model serves both hands: your left hand gets it as it is, your right hand
 mirrored. The paw turns in 3D with your hand (palm or back to the camera, and
 everything in between), and each toe bends with its finger, a finger raised
 out of a fist standing a little taller, as catcam.paws does for the photo
-paws. The arm is its piece repeated down, mirrored back and forth, so it
+paws; the middle finger raised alone stretches the middle toe out long and fat
+(see LONG_GROW). The arm is its piece repeated down, mirrored back and forth, so it
 always runs off-screen. Light comes from the same side as on the heads (see
 catcam.lighting).
 """
@@ -29,6 +30,18 @@ from catcam.paws import STAND, Placement, _fur_color, paw_style
 
 CURL_ANGLE = np.radians(65)  # a fully bent finger turns its toe this far about the knuckle, toward the sole
 RAISE = 0.2  # toe lengths a straight toe stands taller while the other fingers make a fist (see STAND)
+# The middle finger raised alone (catcam.paws.LongToe) stretches the middle toe, cartoon
+# style. Fully out it grows LONG_GROW toe lengths longer, all of it above its knuckle:
+# on the sole up to LONG_SOLE of the way to where its pad starts (the mesh is coarse
+# there, so going further would smear the pad down the toe), on the back up to LONG_BACK
+# toe lengths (more fur to stretch, so it stays furry), blended over LONG_SIDE paw widths
+# either side of the knuckle's depth; the pad and tip keep their shape and move up. It gets
+# LONG_FATTEN of its width and depth fatter, flaring out over the first LONG_FLARE of the
+# stretch, and its blunt tip rounds off (LONG_ROUND of the way to a half circle) over the
+# top LONG_TIP paw widths.
+LONG_GROW, LONG_SOLE, LONG_BACK, LONG_SIDE = 1.3, 0.5, 0.5, 0.1
+LONG_FATTEN, LONG_FLARE = 0.6, 0.3
+LONG_ROUND, LONG_TIP = 1.0, 0.15
 ARM_PIECES = 24  # copies of the model's arm piece down from the paw: enough to always leave the screen
 DEPTH = 40.0  # paw widths in front of and behind the palm that fit in the depth range
 AMBIENT = 0.5  # share of the light that reaches everywhere; the rest falls by facing the light
@@ -64,6 +77,14 @@ uniform float depth;  // px in front of and behind the palm that fit in the dept
 uniform vec4 bend;    // each toe's turn about its knuckle (radians, about x, toward the sole)...
 uniform vec4 lift;    // ...how far it stands taller (paw widths, along y)...
 uniform vec2 knuckle[4];  // ...and its knuckle (y, z), in the paw frame
+// The middle toe stretched out: its growth (paw widths), fattening (share of its width),
+// middle (x) and how much its tip rounds off (0..1)...
+uniform vec4 long_toe;
+// ...stretched from its knuckle up to this far on the sole (x) and on the back (y),
+// blended over this far (z) either side of the knuckle's depth, all paw widths, and
+// fattening over this share (w) of the stretch...
+uniform vec4 long_span;
+uniform vec2 long_tip;  // ...its top (y) and how far below that its tip rounds off (paw widths)
 uniform bool arm;     // drawing the arm: one piece per instance, mirrored back and forth
 uniform vec2 piece;   // the arm piece's top and length, paw widths
 in vec3 in_pos;
@@ -89,6 +110,27 @@ void main() {
         // The toes all bend about x, so a vertex shared by two of them turns by the mix
         // of their angles about the mix of their knuckles: it bends, it doesn't collapse.
         float share = dot(in_toes, vec4(1.0));
+        float middle = in_toes[1];
+        if (middle > 0.0 && long_toe.x > 0.0) {
+            // Stretched upright, before it bends, from its knuckle up to its pad on the
+            // sole, higher on the back: the pad and tip just move up. By how much each
+            // vertex is the middle toe's across the paw (middle / share) and from nothing
+            // at the knuckle, so its base stays joined to the paw and its neighbours.
+            vec2 k = knuckle[1];
+            float up = p.y - k.x;
+            float across = middle / share;
+            float back = clamp(0.5 + 0.5 * (p.z - k.y) / long_span.z, 0.0, 1.0);
+            float shaft = mix(long_span.x, long_span.y, back * back * (3.0 - 2.0 * back));
+            float t = clamp(up / shaft, 0.0, 1.0);  // how far up the stretch
+            float grow = long_toe.x * across;
+            float s = 1.0 + long_toe.y * across * clamp(t / long_span.w, 0.0, 1.0);
+            float r = clamp((p.y - long_tip.x) / long_tip.y + 1.0, 0.0, 1.0);  // into the rounded tip
+            float sx = s * max(mix(1.0, sqrt(max(1.0 - r * r, 0.0)), long_toe.w * across), 0.2);
+            p.x = long_toe.z + (p.x - long_toe.z) * sx;
+            p.z = k.y + (p.z - k.y) * s;
+            p.y += grow * t;
+            n = vec3(n.x / sx, n.y / (t > 0.0 && t < 1.0 ? 1.0 + grow / shaft : 1.0), n.z / s);
+        }
         if (share > 0.0) {
             vec2 hinge = vec2(0.0);
             for (int i = 0; i < 4; i++) hinge += in_toes[i] * knuckle[i];
@@ -280,6 +322,15 @@ class Paw3D:
     def __init__(self, renderer: Renderer, model: PawModel, colours: PawColours):
         self.renderer, self.model = renderer, model
         self.target = _target(renderer)
+        # The middle toe's middle (x), its top, and how far above its knuckle the first
+        # of its pad starts showing (on the vertices at least partly its own across the paw).
+        middle, share = model.toes[:, 1], model.toes.sum(axis=1)
+        self.middle_x = float(np.median(model.pos[middle > 0.99, 0]))
+        own = (middle > 0.25 * share) & (share > 0) & (model.pad > PAD_EDGE[0])
+        sole = max(LONG_SOLE * float(np.percentile(model.pos[own, 1], 1) - model.knuckles[1, 0]), 0.01)
+        top = float(model.pos[middle > 0.5, 1].max())
+        self.long_span = (sole, LONG_BACK * model.toe_length, LONG_SIDE, LONG_FLARE)
+        self.long_tip = (top, LONG_TIP)
         self.paw = self._vao(model.pos, model.normal, model.toes, model.pad, model.light, model.faces,
                              colours)
         self.arm = self._vao(model.arm_pos, model.arm_normal, np.zeros((len(model.arm_pos), 4)),
@@ -306,6 +357,7 @@ class Paw3D:
         ctx.disable(moderngl.BLEND | moderngl.CULL_FACE)
         prog["piece"].value = (-self.model.arm_cut, self.model.arm_piece)
         prog["knuckle"].write(self.model.knuckles.astype("f4").tobytes())
+        prog["long_span"].value, prog["long_tip"].value = self.long_span, self.long_tip
         for place in placements:
             prog["place"].write((place.size * place.axes).astype("f4").T.tobytes())
             prog["at"].value = (place.x, place.y, 0.0)
@@ -313,6 +365,9 @@ class Paw3D:
             prog["opacity"].value = place.opacity
             bend, lift = toe_bends(self.model, place.curls)
             prog["bend"].value, prog["lift"].value = tuple(bend), tuple(lift)
+            long = place.long_toe
+            prog["long_toe"].value = (LONG_GROW * self.model.toe_length * long, LONG_FATTEN * long,
+                                      self.middle_x, LONG_ROUND * min(long, 1.0))
             prog["arm"].value = False
             self.paw.render()
             prog["arm"].value = True

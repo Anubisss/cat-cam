@@ -9,6 +9,10 @@ toe beans, coloured like the cat: the arm takes the fur of its cheeks, the
 sock the fur of its chin. Bending a finger curls the toe on its side of the
 paw in, so a fist curls them all. A paw's position is taken relative to your
 face, so a hand next to your chin puts the paw next to the cat's chin.
+
+An extra the app doesn't mention: raising your middle finger alone out of a
+fist makes a 3D paw's middle toe spring up comically long and fat (see
+LongToe), easing back down when the gesture ends.
 """
 
 from typing import NamedTuple
@@ -51,6 +55,16 @@ KNUCKLE, FUR = 0.35, 0.2
 # own length TOE_HALF either side of it.
 TOE_X = (-0.32, -0.12, 0.12, 0.32)
 TOE_HALF = 0.08
+# The long middle toe (see LongToe), by finger curls (0 straight .. 1 bent): it comes on
+# when the middle finger is straighter than LONG_ON[0] while the index, ring and little
+# fingers are all curled past LONG_ON[1], and goes off only once the middle finger bends
+# past LONG_OFF[0] or one of the others opens below LONG_OFF[1], so it doesn't flicker.
+LONG_ON, LONG_OFF = (0.3, 0.6), (0.5, 0.4)
+# It springs to its new length like a weight on a spring: LONG_SPRING rad/s, damped by
+# LONG_DAMPING[0] on the way out (under 1: it overshoots and wobbles a little) and by
+# LONG_DAMPING[1] on the way back (1: no overshoot, it just eases in). Stepped at least
+# every LONG_STEP seconds, so a slow frame can't make the spring blow up.
+LONG_SPRING, LONG_DAMPING, LONG_STEP = 16.0, (0.4, 1.0), 1 / 240
 
 BEAN = (178, 165, 240)
 OUTLINE_SHADE = 0.75  # toe outlines: the sock colour, darkened
@@ -86,6 +100,7 @@ class Placement(NamedTuple):
     axes: np.ndarray  # (3, 3) columns: toward the thumb, up the hand, out of its back (image axes, z away)
     curls: np.ndarray  # (4,) index to little finger: 0 straight .. 1 bent
     opacity: float
+    long_toe: float = 0.0  # the middle toe stretched out: 0 not .. 1 fully (see LongToe)
 
 
 def _fur_color(sprite: np.ndarray, points: np.ndarray, radius: float, brightness: float):
@@ -259,10 +274,43 @@ def palm_facing(toward: float) -> float:
     return float(t * t * (3 - 2 * t))
 
 
+class LongToe:
+    """The middle finger raised alone out of a fist, and how far a paw's middle toe is
+    stretched out for it: 0 (its own length) .. 1 (fully), springing out past 1 for a
+    moment and easing back to 0 when the gesture ends."""
+
+    def __init__(self):
+        self.on = False
+        self.amount = 0.0
+        self.speed = 0.0  # of amount, per second
+
+    def update(self, curls, dt: float) -> float:
+        """curls: (4,) index to little finger, 0 straight .. 1 bent, or None without a hand."""
+        if curls is None:
+            self.on = False
+        else:
+            middle, others = curls[1], min(curls[0], curls[2], curls[3])
+            limits = LONG_OFF if self.on else LONG_ON
+            self.on = bool(middle < limits[0] and others > limits[1])
+        target = 1.0 if self.on else 0.0
+        if self.amount == self.speed == target == 0.0:
+            return 0.0  # at rest
+        dt = min(dt, 0.25)
+        steps = max(int(np.ceil(dt / LONG_STEP)), 1)
+        h, damping = dt / steps, LONG_DAMPING[0] if self.on else LONG_DAMPING[1]
+        for _ in range(steps):  # semi-implicit Euler, steady at these step sizes
+            pull = LONG_SPRING ** 2 * (target - self.amount) - 2 * damping * LONG_SPRING * self.speed
+            self.speed += h * pull
+            self.amount += h * self.speed
+        if not self.on and abs(self.amount) < 1e-3 and abs(self.speed) < 1e-2:
+            self.amount = self.speed = 0.0
+        return self.amount
+
+
 class Paws:
     def __init__(self, out_width: int):
         self.out_w = out_width
-        self.slots = {}  # handedness -> {"filter", "params", "presence"}
+        self.slots = {}  # handedness -> {"filter", "params", "presence", "long_toe"}
 
     def update(self, hands, user_face: np.ndarray | None, cam_size, dt: float,
                cat_face_center: np.ndarray, cat_face_width: float):
@@ -310,6 +358,7 @@ class Paws:
         for name, slot in self.slots.items():
             present = 1.0 if name in seen else 0.0
             slot["presence"] += FADE_RATE * (present - slot["presence"])
+            slot.setdefault("long_toe", LongToe()).update(slot["params"][10:14] if name in seen else None, dt)
             if name not in seen and slot["presence"] < 0.02:
                 slot["filter"] = OneEuroFilter(PAW_MIN_CUTOFF, PAW_BETA)  # restart fresh
 
@@ -354,8 +403,9 @@ class Paws:
                  if slot["presence"] >= 0.02 and "params" in slot and name not in hidden]
         if not isinstance(paws, (PawSprite, dict)):
             return paws.render(frame, [
-                Placement(p[0], p[1], p[2], hand_axes(p), np.clip(p[10:14], 0, 1), presence)
-                for _, p, presence in shown])
+                Placement(p[0], p[1], p[2], hand_axes(p), np.clip(p[10:14], 0, 1), presence,
+                          max(self.slots[name].get("long_toe", LongToe()).amount, 0.0))
+                for name, p, presence in shown])
         out = frame.copy()
         for name, params, presence in shown:
             x, y, size, ux, uy = params[:5]

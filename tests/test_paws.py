@@ -6,7 +6,10 @@ import numpy as np
 from catcam.paws import (
     CHEEKS,
     CHIN,
+    LONG_OFF,
+    LONG_ON,
     PHOTO_ARM_LENGTH,
+    LongToe,
     Paws,
     finger_curls,
     palm_facing,
@@ -275,3 +278,78 @@ def test_a_new_hand_far_away_goes_by_its_guess():
     _update(paws, _detect((0.8, 0.5, "Right")), 20)
     _update(paws, _detect((0.8, 0.5, "Right"), (0.2, 0.5, "Left")), 3)
     assert paws.slots["Left"]["params"][0] < 640 < paws.slots["Right"]["params"][0]
+
+
+def _long_toe(curls, frames=30, toe=None):
+    """A LongToe (a new one unless given) after frames at 30 fps of these curls, with
+    the amount after each frame."""
+    toe = toe or LongToe()
+    return toe, [toe.update(np.array(curls, float), 1 / 30) for _ in range(frames)]
+
+
+def test_the_middle_finger_raised_alone_stretches_the_middle_toe():
+    toe, amounts = _long_toe([1, 0, 1, 1])
+    assert toe.on
+    assert 1.05 < max(amounts) < 1.5  # it springs out past its length for a moment...
+    assert abs(amounts[-1] - 1) < 0.05  # ...and settles
+    _, amounts = _long_toe([0.9, 0.1, 0.8, 1])  # the thumb or a loose fist doesn't matter
+    assert amounts[-1] > 0.9
+
+
+def test_other_hands_leave_the_middle_toe_alone():
+    for curls in ([0, 0, 0, 0],  # open hand
+                  [1, 1, 1, 1],  # fist
+                  [0, 1, 1, 1],  # index alone
+                  [0.45, 0.45, 0.45, 0.45],  # half fist
+                  [0, 0, 1, 1],  # index and middle
+                  [1, 0, 1, 0],  # middle and little finger
+                  [1, 0, 0.5, 1]):  # ring finger only half bent
+        toe, amounts = _long_toe(curls)
+        assert not toe.on and max(amounts) == 0, curls
+
+
+def test_the_long_toe_doesnt_flicker():
+    """Hysteresis: curls between the on and off limits keep whatever it was."""
+    between = [[1, LONG_ON[0] + 0.1, 1, 1], [1, 0, LONG_ON[1] - 0.1, 1]]
+    for curls in between:
+        assert LONG_ON[0] < curls[1] < LONG_OFF[0] or LONG_OFF[1] < curls[2] < LONG_ON[1]
+        toe, _ = _long_toe(curls)
+        assert not toe.on  # not on from there...
+        toe, _ = _long_toe([1, 0, 1, 1])
+        toe, amounts = _long_toe(curls, toe=toe)
+        assert toe.on and amounts[-1] > 0.9  # ...but not off either
+    toe, _ = _long_toe([1, 0, 1, 1])
+    toe, _ = _long_toe([1, LONG_OFF[0] + 0.05, 1, 1], frames=1, toe=toe)
+    assert not toe.on
+
+
+def test_the_long_toe_eases_back():
+    toe, _ = _long_toe([1, 0, 1, 1])
+    toe, amounts = _long_toe([1, 1, 1, 1], frames=45, toe=toe)
+    steps = np.diff(amounts)
+    assert (steps <= 1e-9).all()  # no bounce on the way back...
+    assert np.abs(steps).max() < 0.25  # ...no jump...
+    assert amounts[-1] == 0 and min(amounts) >= 0  # ...and all the way to its own length
+    toe, _ = _long_toe([1, 0, 1, 1])
+    assert toe.update(None, 1 / 30) < 1  # a hand lost lets it go too
+    assert not toe.on
+    assert LongToe().update(np.array([1, 0, 1, 1.0]), 1.0) < 1.5  # a slow frame doesn't blow it up
+
+
+def test_paws_stretch_the_middle_toe_of_the_hand_making_the_gesture():
+    def hand(cx, middle_up):
+        points = _hand(cx, 0.5)  # all fingertips on the wrist: a fist
+        if middle_up:
+            points[12] = SimpleNamespace(x=cx - 0.5 * 0.05 / 2, y=0.5 - 3 * 0.05)
+        return points
+
+    paws = Paws(out_width=1280)
+    hands = SimpleNamespace(hand_landmarks=[hand(0.2, True), hand(0.8, False)],
+                            handedness=[[SimpleNamespace(category_name="Right")],
+                                        [SimpleNamespace(category_name="Left")]])
+    _update(paws, hands, 20)
+    assert paws.slots["Right"]["long_toe"].amount > 0.8
+    assert paws.slots["Left"]["long_toe"].amount == 0
+    placed = []
+    paws.draw(np.zeros((720, 1280, 3), np.uint8), SimpleNamespace(render=lambda frame, p: placed.extend(p)))
+    assert sorted(round(p.long_toe, 1) > 0.8 for p in placed) == [False, True]
