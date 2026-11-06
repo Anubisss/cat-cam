@@ -275,10 +275,12 @@ def dropout_metrics(full: np.ndarray, gapped: np.ndarray, t: np.ndarray, gaps) -
 def evaluate(clip: Path) -> dict:
     data = track(clip)
     t, found = data["t"], data["found"]
+    report = {"frames": len(t), "fps": float(1 / np.median(np.diff(t))), "found": float(found.mean())}
+    if found.sum() < 10:  # nothing to measure (e.g. nobody in front of the camera)
+        return report
     ok = _settled(found, t)
     out, raw = replay(data)
     ref = reference(raw, t)
-    report = {"frames": len(t), "fps": float(1 / np.median(np.diff(t))), "found": float(found.mean())}
     for name, (unit, scale) in UNITS.items():
         jitter, lag, error, still, moving = motion_metrics(out[name], ref[name], t, ok, STILL_BELOW[name])
         raw_jitter = motion_metrics(raw[name], ref[name], t, ok, STILL_BELOW[name])[0]
@@ -335,6 +337,8 @@ def sheet(clip: Path, path: Path, cat_name: str | None = None, frames=(), count:
 def print_report(clip: Path, report: dict):
     print(f"\n{clip.name}: {report['frames']} frames at {report['fps']:.1f} fps, face found in "
           f"{100 * report['found']:.0f}%")
+    if "head" not in report:
+        return
     print(f"  {'signal':8} {'jitter':>8} {'(raw)':>8} {'lag ms':>7} {'error':>8}  unit  frames still/moving")
     for name in UNITS:
         r = report[name]
@@ -365,8 +369,9 @@ def main():
     for clip in map(Path, args.clips):
         if args.retrack:
             track(clip, refresh=True)
-        print_report(clip, evaluate(clip))
-        if args.sheet:
+        report = evaluate(clip)
+        print_report(clip, report)
+        if args.sheet and "head" in report:
             frames = [int(f) for f in args.frames.split(",") if f]
             sheet(clip, args.sheet.with_stem(f"{args.sheet.stem}_{clip.stem}"), args.cat, frames)
 
