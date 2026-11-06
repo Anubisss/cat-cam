@@ -90,6 +90,9 @@ EXPRESSIVE = [
     "browOuterUpRight", "eyeBlinkLeft", "eyeBlinkRight", "cheekPuff",
 ]
 RELAXED_BELOW = 0.25
+# How sure the face detector must be to (re)find a face. MediaPipe's 0.5 lets a
+# face partly out of the picture or in a dim room go unfound for seconds.
+FACE_DETECTION_CONFIDENCE = 0.3
 # Losing your face (a hand in front of it, turning away, bad light), the
 # animal keeps its last pose for KEEP_POSE s, then relaxes toward rest (facing
 # the viewer, eyes open, a neutral face) over about RELAX s. When your face is
@@ -382,6 +385,7 @@ def create_trackers():
     face = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
         base_options=BaseOptions(model_asset_path=str(FACE_MODEL)),
         running_mode=video,
+        min_face_detection_confidence=FACE_DETECTION_CONFIDENCE,
         output_face_blendshapes=True,
         output_facial_transformation_matrixes=True,
     ))
