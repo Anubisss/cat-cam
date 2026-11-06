@@ -309,7 +309,8 @@ all_cats/          source portraits
 assets/cats/       prepared cats (cutout + face points, 3D heads), used at runtime
 assets/mouth/      3D teeth, gums, palate and tongue, a cat's and a dog's
 docs/3d-heads.md   how to make a 3D head
-tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet, the mouth model
+tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet, the mouth model;
+                   tracking_eval.py measures face tracking on recorded webcam clips
 models/            MediaPipe face and hand models
 packaging/         the standalone macOS app: PyInstaller spec, icon, build script
 ```

@@ -32,8 +32,11 @@ an image and check them, as the tests only catch holes and gross errors.
   emoji pictures).
 - `catcam/cat_mesh.py`: the 3D head mesh, its shaders and the drawn mouth;
   `mouth_fit.py`, `ears.py` and `lighting.py` feed into it.
-- `catcam/cat_face.py`: eyelids. `face_motion.py`: expression transfer.
-  `head_pose.py`: head rotation and the One Euro filter.
+- `catcam/cat_face.py`: eyelids. `face_motion.py`: expression transfer and
+  each blendshape's resting score. `head_pose.py`: head rotation and the One
+  Euro filter. `tools/tracking_eval.py` replays recorded webcam clips through
+  the tracking and measures jitter, lag, blinks and dropouts: run it before and
+  after changing any smoothing (keep the clips out of git, they are faces).
 - `catcam/paws.py`, `paw_photos.py`: paws. `tail.py`: the tail.
 - `catcam/head3d.py`: real 3D heads, shown while the "3D head" switch is
   on, for cats with an `assets/cats/<Name>/head3d.npz`. It borrows the 2D cat's
