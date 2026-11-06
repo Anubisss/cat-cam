@@ -39,7 +39,7 @@ NOISE_CREEP = 3.0  # dB/s the noise level rises while it's louder (it drops at o
 MIN_VOICED = 0.03  # s the voice must last before it counts, so clicks don't bark
 MIN_GAP = 0.12  # s between two barks at least
 LOUDNESS = (12.0, 36.0)  # dB above the noise mapped to the quietest..loudest bark
-GAIN = (0.3, 1.0)
+GAIN = (0.15, 0.5)  # volume of the quietest..loudest bark (1 = the sound as recorded)
 LOUD_PITCH = 2.0  # semitones higher for the loudest barks
 
 # Your pitch, measured at the start of each syllable.
