@@ -1,0 +1,18 @@
+# Where Grinbert's lips meet, corner to corner (portrait px): the lower edge of his
+# whisker pads, a wide smile, which the face fit puts too low and only three quarters as
+# wide (the 3D head's import finds the little notch under the nose on the model itself).
+454, 833
+479, 838
+505, 841
+529, 843
+555, 843
+579, 839
+605, 833
+629, 836
+654, 834
+680, 840
+704, 843
+730, 843
+754, 840
+780, 835
+805, 830

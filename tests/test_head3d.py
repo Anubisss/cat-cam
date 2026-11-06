@@ -120,7 +120,7 @@ def test_own_jaw_opens_between_the_lips(woofgang):
         return np.count_nonzero((frame.max(axis=2) < 50) & (frame[..., 2] > frame[..., 0]))
 
     assert inside(opened) > inside(closed) + 0.002 * OUT[0] * OUT[1]
-    top = OUT[1] // 2  # eyes and nose
+    top = OUT[1] * 9 // 20  # eyes and nose: a dog's mouth corners reach up beside its nose's tip
     assert np.array_equal(opened[:top], closed[:top])
 
 

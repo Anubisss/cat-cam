@@ -49,21 +49,31 @@ SPECK_DARK, SPECK_GAP, SPECK_WINDOW, SPECK_AREA = 15, 60, 41, 600
 # don't count as folds, and the cut is smoothed as much.
 JAW_SEEDS = [17, 18, 83, 84, 152, 175, 199, 200, 313, 314]
 FACE_SEEDS = [0, 1, 2, 37, 39, 40, 98, 164, 185, 267, 269, 270, 327, 409]
-# Each side also starts right by the lips: this far (face widths) below and above the
-# line where they meet, so the two meet in the slit and not in a deeper fold nearby
+# Each side also starts right by the lips: these distances (face widths) below and above
+# the line where they meet, so the two meet in the slit and not in a deeper fold nearby
 # (a cat's chin, a grin's lower lip pad).
-LIP_SEED_GAP = 0.04
+LIP_SEED_GAPS = (0.01, 0.025, 0.04)
+# Where the lips meet is where the upper lip ends: seen from the front, where the model's
+# surface falls back most steeply going down (an upper lip hanging over the lower, or
+# over the open slit behind it). It is looked for up to LIP_EDGE_SEARCH face widths above
+# the face fit's line, the fall measured over twice LIP_EDGE_SPAN and the line found
+# smoothed over LIP_EDGE_SMOOTH. Only an edge above the fit's line counts (the fit lands
+# on the lower lip when it misses, never on the upper), and only where the surface falls
+# back more steeply there than it typically does around the mouth, by LIP_EDGE_STEEPER
+# (depth per height): a real edge, not just the lay of the face.
+LIP_EDGE_SEARCH, LIP_EDGE_SPAN, LIP_EDGE_SMOOTH, LIP_EDGE_STEEPER = 0.07, 0.004, 0.015, 0.5
+BEHIND_LIPS = 0.15  # face widths behind the lips' edge the jaw starts from what is hidden there
 # The jaw is cut free only along the lips: within CUT_REACH face widths of the line
-# where they meet, fading out over CUT_FADE. Further along its edge (down the sides
-# of the chin, under it) the skin stretches instead, the jaw's pull fading over
-# JAW_SOFT face widths across the edge.
-CUT_REACH, CUT_FADE, JAW_SOFT = 0.06, 0.04, 0.03
+# where they meet as seen from the front (however deep behind it), fading out over
+# CUT_FADE. Further along its edge (down the sides of the chin, under it) the skin
+# stretches instead, the jaw's pull fading over JAW_SOFT face widths across the edge.
+CUT_REACH, CUT_FADE, JAW_SOFT = 0.03, 0.02, 0.03
 # At the corners of the mouth the lips stay together, so it opens in a lens, not a slot,
 # and the corners keep following your face (a smile): from CORNER_START of the way out
 # from its middle, the jaw's pull on the lips fades to nothing at the corners and past
 # them, coming back over CORNER_DEPTH face widths below the line where the lips meet.
 CORNER_START, CORNER_DEPTH = 0.4, 0.12
-LIPS_APART = 0.3  # share of the jaw's pull by which a cut's two sides must differ to count as the lips' cut
+LIPS_APART = 0.05  # share of the jaw's pull by which a cut's two sides must differ to count as the lips' cut
 JAW_FOLD = 0.1
 JAW_SMOOTH = 0.01
 SLIT_FRONT = 0.3  # face widths behind the cut's front: how deep the slit seen between the lips goes
@@ -312,12 +322,65 @@ def smoothstep(x: np.ndarray) -> np.ndarray:
     return x * x * (3 - 2 * x)
 
 
+def lip_edge(depth: np.ndarray, scale: float, points: np.ndarray) -> np.ndarray:
+    """Where the lips meet on the model, seen from the portrait's camera: per portrait
+    px column from one mouth corner to the other, (x, y) px. That is the face fit's line
+    between the lips, raised to the upper lip's lower edge where the model shows one
+    above it (see LIP_EDGE_SEARCH). depth: the model's (see Raster.depth); scale: its
+    px per model unit."""
+    face_width = np.ptp(points[:, 0])
+    upper, lower = points[UPPER_INNER_LIP, :2], points[LOWER_INNER_LIP, :2]
+    xs = np.arange(int(np.ceil(upper[0, 0])), int(np.floor(upper[-1, 0])) + 1)
+    fit = (np.interp(xs, upper[:, 0], upper[:, 1]) + np.interp(xs, lower[:, 0], lower[:, 1])) / 2
+    # How steeply the surface falls back going down, around every px near the line.
+    span = max(int(round(LIP_EDGE_SPAN * face_width)), 1)
+    rows = np.arange(int(fit.min() - LIP_EDGE_SEARCH * face_width), int(np.ceil(fit.max())) + 1)
+    rows = np.clip(rows, span, len(depth) - span - 1)
+    surface = np.where(depth < -1e8, np.nan, depth * scale)
+    fall = np.nan_to_num(surface[rows - span][:, xs] - surface[rows + span][:, xs]) / (2 * span)
+    searched = (rows[:, None] >= fit - LIP_EDGE_SEARCH * face_width) & (rows[:, None] <= fit)
+    score = np.where(searched, fall - np.median(fall, axis=0), -1e6)  # never outside the search
+    # The steepest line across, moving at most a px up or down per column.
+    cost = -score
+    step = np.zeros(cost.shape, int)
+    for j in range(1, len(xs)):
+        before = np.stack([np.r_[np.inf, cost[:-1, j - 1]], cost[:, j - 1], np.r_[cost[1:, j - 1], np.inf]])
+        step[:, j] = before.argmin(axis=0) - 1
+        cost[:, j] += before.min(axis=0)
+    path = np.zeros(len(xs), int)
+    path[-1] = np.argmin(cost[:, -1])
+    for j in range(len(xs) - 1, 0, -1):
+        path[j - 1] = path[j] + step[path[j], j]
+    steeper = score[path, np.arange(len(xs))] > LIP_EDGE_STEEPER
+    edge = np.where(steeper, np.minimum(rows[path], fit), fit)
+    edge = cv2.GaussianBlur(edge[None], (0, 0), LIP_EDGE_SMOOTH * face_width,
+                            borderType=cv2.BORDER_REPLICATE)[0]
+    return np.column_stack([xs, edge])
+
+
+def behind_lips(vertices, cam: "FrontCamera", depth, edge, face_width) -> np.ndarray:
+    """The vertices hidden behind where the lips meet (edge, portrait px): seen from the
+    front at or below that line, but behind the surface there, at most BEHIND_LIPS face
+    widths deep. They are the underside of an upper lip hanging over the lower one, or
+    the inside of a slit left open: all of it goes with the jaw, so the jaw is cut free
+    right along the lip's edge, where the opening shows."""
+    h, w = depth.shape
+    px, z = cam.project(vertices)
+    x = np.clip(px[:, 0].round().astype(int), 0, w - 1)
+    y = np.clip(px[:, 1].round().astype(int), 0, h - 1)
+    line = np.interp(px[:, 0], edge[:, 0], edge[:, 1], left=np.nan, right=np.nan)
+    front = depth[y, x]
+    return np.nonzero((px[:, 1] >= line - LIP_EDGE_SPAN * face_width)
+                      & (px[:, 1] <= line + LIP_SEED_GAPS[-1] * face_width)
+                      & (z < front - DEPTH_TOL) & (z > front - BEHIND_LIPS * face_width / cam.scale))[0]
+
+
 def find_jaw(vertices, faces, landmarks, by_lips, face_model):
     """The head's own lower jaw (see JAW_SEEDS), per vertex: how far it lies on the
     jaw's side of the cut (surface, face widths; negative: the face's side) and how
     much it would move with the jaw, 0..1. landmarks: the face's on the model;
     by_lips: points on the model just below and just above the lips (see
-    LIP_SEED_GAP); face_model: a face width in model units."""
+    LIP_SEED_GAPS); face_model: a face width in model units."""
     # Over the surface: vertices split along the texture's seams are one point.
     points, weld = np.unique(vertices, axis=0, return_inverse=True)
     weld = weld.ravel()
@@ -353,12 +416,14 @@ def find_jaw(vertices, faces, landmarks, by_lips, face_model):
     nearest = cKDTree(points[reached]).query(points[~reached])[1]
     margin[~reached] = margin[reached][nearest]
     margin = np.array([margin[near].mean() for near in around])  # a smooth line to cut along
-    # Only the jaw's own patch: not specks of skin it happens to reach first elsewhere.
+    # Only the jaw's own patch, the one with the chin: not specks of skin it happens to
+    # reach first elsewhere, nor a whisker hidden behind the lips.
+    chin = np.unique(tree.query(landmarks[JAW_SEEDS])[1])
     patch = margin > 0
     _, label = connected_components(graph[patch][:, patch], directed=False)
     labels = np.full(n, -1)
     labels[patch] = label
-    stray = patch & ~np.isin(labels, labels[jaw_seeds])
+    stray = patch & ~np.isin(labels, labels[chin])
     margin[stray] = -margin[stray]
     near, far = JAW_REACH
     reach = np.linalg.norm(points - landmarks[[14, 17]].mean(axis=0), axis=1) / face_model
@@ -421,15 +486,17 @@ def corners_together(vertices, lips, cam: "FrontCamera", face_model) -> np.ndarr
     return 1 - out * (1 - smoothstep(below / CORNER_DEPTH))
 
 
-def find_slit(points, opens, cam: "FrontCamera", face_model):
-    """Where the lips meet: the middle of the slit seen from the front (model) and its
-    width (model units), from the points on the cut (points) where the jaw opens."""
+def find_slit(points, opens, middle, cam: "FrontCamera", face_model):
+    """Where the lips meet: the middle of the slit (model) and its width seen from the
+    front (model units), from the points on the cut (points) where the jaw opens and
+    the middle of the line where the lips meet (middle, model): the point of the cut
+    nearest it seen from the front, foremost of those, which is the upper lip's rim."""
     q = points[opens] @ cam.rot.T
     front = q[:, 2] >= q[:, 2].max() - SLIT_FRONT * face_model
-    q, slit = q[front], points[opens][front]
-    width = np.ptp(q[:, 0])
-    middle = np.abs(q[:, 0] - np.median(q[:, 0])) < 0.05 * width
-    return slit[middle][np.argmax(q[middle, 2])], width
+    width = float(np.ptp(q[front, 0]))
+    near = np.linalg.norm(q[:, :2] - (middle @ cam.rot.T)[:2], axis=1)
+    near = near <= max(near.min(), 0.01 * face_model)
+    return points[opens][near][np.argmax(q[near, 2])], width
 
 
 def outward(vertices, faces) -> np.ndarray:
@@ -480,20 +547,26 @@ def import_glb(glb: str, name: str, own_mouth: bool = False, animal: str = "cat"
     uv, jaw = mesh.visual.uv, np.zeros(0, np.float32)
     slit = {}
     if own_mouth:
-        face_model = np.ptp(points[:, 0]) / cam.scale
-        gap = (0, LIP_SEED_GAP * np.ptp(points[:, 0]))
-        by_lips = [on_model(points[lip[1:-1], :2] + side * np.array(gap))
-                   for lip, side in ((LOWER_INNER_LIP, 1), (UPPER_INNER_LIP, -1))]
-        margin, reach = find_jaw(vertices, faces, landmarks, by_lips, face_model)
+        face_width = np.ptp(points[:, 0])
+        face_model = face_width / cam.scale
+        edge = lip_edge(depth, cam.scale, points)
+        inner = edge[np.abs(edge[:, 0] - edge[:, 0].mean()) < 0.4 * np.ptp(edge[:, 0])]  # off the corners
+        below, above = [on_model(np.vstack([inner + (0, side * gap * face_width) for gap in LIP_SEED_GAPS]))
+                        for side in (1, -1)]
+        below = np.vstack([below, vertices[behind_lips(vertices, cam, depth, inner, face_width)]])
+        margin, reach = find_jaw(vertices, faces, landmarks, (below, above), face_model)
         n = len(vertices)
-        lips = cKDTree(landmarks[UPPER_INNER_LIP + LOWER_INNER_LIP]).query(vertices)[0] / face_model
+        lips_model = on_model(edge - (0, 2 * LIP_EDGE_SPAN * face_width))  # on the upper lip's edge
+        seen = cKDTree((lips_model @ cam.rot.T)[:, :2])  # from the front
+        lips = seen.query((vertices @ cam.rot.T)[:, :2])[0] / face_model
         cut = 1 - smoothstep((lips - CUT_REACH) / CUT_FADE)
         attributes = {"vertices": vertices, "normals": normals, "uv": uv, "photo_px": photo_px}
         parts, faces, jaw = cut_jaw(attributes, faces, margin, reach, cut)
         vertices, normals, uv, photo_px = (parts[k] for k in ("vertices", "normals", "uv", "photo_px"))
         normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
-        jaw = jaw * corners_together(vertices, landmarks[UPPER_INNER_LIP], cam, face_model).astype(np.float32)
-        middle, width = find_slit(vertices[n:], jaw[n:] > 0.5, cam, face_model)
+        jaw = jaw * corners_together(vertices, lips_model, cam, face_model).astype(np.float32)
+        lips_middle = lips_model[len(lips_model) // 2]
+        middle, width = find_slit(vertices[n:], jaw[n:] > 0.5, lips_middle, cam, face_model)
         slit = {"slit_middle": middle.astype("f4"), "slit_width": np.float32(width)}
         # Where the lips were cut apart: each point twice, on the face's side and on the
         # jaw's (see cut_jaw). The app shows the mouth's inside between the two.

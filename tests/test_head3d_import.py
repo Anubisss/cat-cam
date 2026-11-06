@@ -1,6 +1,7 @@
 import numpy as np
 
-from catcam.head3d_import import cut_jaw
+from catcam.head3d_import import cut_jaw, lip_edge
+from catcam.mouth_fit import LOWER_INNER_LIP, UPPER_INNER_LIP
 
 
 def _grid(n=6):
@@ -42,3 +43,35 @@ def test_the_jaw_keeps_its_reach():
     reach = np.clip(1 - vertices[:, 0] / 6, 0, 1)  # fading toward x = 6
     _, cut, jaw = cut_jaw({"vertices": vertices}, faces, vertices[:, 1] - 2.4, reach)
     assert np.allclose(jaw[:len(vertices)], np.where(vertices[:, 1] > 2.4, reach, 0))
+
+
+def _mouth(depth_rows, fit_y=500.0):
+    """Face points 1000 px wide with the lips meeting at fit_y from x 400 to 600, and a
+    depth map (1000 px square, 1 px per model unit) given row by row."""
+    points = np.zeros((478, 3))
+    points[:, 0] = 500
+    points[0, 0], points[1, 0] = 0, 1000
+    for lip in (UPPER_INNER_LIP, LOWER_INNER_LIP):
+        points[lip, 0] = np.linspace(400, 600, len(lip))
+        points[lip, 1] = fit_y
+    depth = np.repeat(np.asarray(depth_rows, float)[:, None], 1000, axis=1)
+    return depth, points
+
+
+def test_the_lips_meet_where_the_upper_lip_ends():
+    # An upper lip hanging 30 px over the lower one, its edge 40 px above the face fit's line.
+    rows = np.arange(1000)
+    depth, points = _mouth(np.where(rows < 460, 30.0, 0.0) - 0.2 * rows)
+    edge = lip_edge(depth, 1.0, points)
+    assert np.allclose(edge[:, 0], np.arange(400, 601))
+    assert np.all(np.abs(edge[20:-20, 1] - 460) <= 5)
+
+
+def test_a_smooth_face_keeps_the_fitted_line():
+    rows = np.arange(1000)
+    # Curving away more and more gently going down: steepest at the top, but nowhere an edge.
+    depth, points = _mouth(-0.2 * rows + 1e-3 * (rows - 400) ** 2)
+    assert np.allclose(lip_edge(depth, 1.0, points)[:, 1], 500)
+    # An edge below the fitted line is the chin's, not the lips'.
+    depth, points = _mouth(np.where(rows < 540, 30.0, 0.0) - 0.2 * rows)
+    assert np.allclose(lip_edge(depth, 1.0, points)[:, 1], 500)

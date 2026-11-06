@@ -221,15 +221,25 @@ inside, so no lip cut or mouth cavity is added. The import finds the head's
 own lower jaw on the model and cuts it free, and the app swings it open with
 your mouth, with the same teeth, gums and tongue inside. Woofgang's is like
 that:
+- **Where the lips meet:** where the upper lip ends. The face fit's line
+  between the lips lands on the lower lip when it misses, so the import looks
+  on the model, seen from the portrait's camera, for the upper lip's lower
+  edge above it: where the surface falls back steeply going down, an upper
+  lip hanging over the lower one, or over a slit left open behind it (many of
+  Meshy's heads have one, with teeth painted on its back). Where the model
+  shows no such edge, the fit's line stays.
 - **Finding the jaw:** the jaw spreads over the model's surface from its lower
   lip and chin, the rest of the face from its upper lip and nose, and the jaw
   ends where the two meet. Both also start right by the lips, a little below
   and above the line where they meet, and going into a fold (a valley in the
   surface) costs extra, so they meet in the slit between the lips rather
-  than in a deeper fold nearby (a cat's chin, a grin's lower lip). Bumps of
-  fur and pores don't count as folds; loose tufts of fur go with the surface
-  nearest them. The jaw also takes in the skin under the chin, less and less
-  of it further from the lips.
+  than in a deeper fold nearby (a cat's chin, a grin's lower lip). The jaw
+  also starts from everything hidden behind that line: the underside of the
+  upper lip and the inside of an open slit go with it, so the opening starts
+  right at the upper lip's edge and nothing of the lower lip stays behind on
+  the face. Bumps of fur and pores don't count as folds; loose tufts of fur
+  go with the surface nearest them. The jaw also takes in the skin under the
+  chin, less and less of it further from the lips.
 - **Cutting it free:** along the lips, the faces across that line are split
   along it, and every point on it is made twice, once for each side, so the
   lips part cleanly. Further along the jaw's edge (down the sides of the
@@ -238,7 +248,8 @@ that:
   has there (never seen, so its texture is guesswork) as the dark inside of
   the mouth, and so are the head's back faces just round it.
 - **The mouth inside** is sized and placed by the slit: the import saves where
-  the lips meet in the middle and how wide the slit is. Teeth or tongue that
+  the lips meet in the middle (the upper lip's rim there, so the teeth hang
+  right behind it) and how wide the slit is. Teeth or tongue that
   would poke out through the skin anywhere are not drawn there.
 - **Opening it:** the jaw swings about a hinge behind the mouth corners, where
   a dog's jaw joint is (`JAW_HINGE` in `catcam/head3d.py`), as far as your
@@ -255,12 +266,15 @@ that:
 The import prints how many vertices move with the jaw. If the jaw takes a
 piece of the upper lip, or leaves part of the lower lip behind, the knobs are
 at the top of `catcam/head3d_import.py`: `JAW_SEEDS` and `FACE_SEEDS` (the
-face points each side starts from), `LIP_SEED_GAP` (how close to the lips
-they also start), `JAW_FOLD` (how strongly folds divide them), `CUT_REACH`
-(how far from the lips the jaw is cut rather than stretched) and
+face points each side starts from), `LIP_SEED_GAPS` (how close to the lips
+they also start), `LIP_EDGE_SEARCH` and `LIP_EDGE_STEEPER` (how far above
+the fit's line to look for the upper lip's edge, and how steep it must be),
+`BEHIND_LIPS` (how deep behind that edge the jaw starts from what is hidden),
+`JAW_FOLD` (how strongly folds divide them), `CUT_REACH` (how far from the
+lips, seen from the front, the jaw is cut rather than stretched) and
 `JAW_REACH` (how far down the throat the jaw's pull fades out). If the
-mouth is in the wrong place altogether, the face fit is off: place the lips
-by hand (below), as for Woofgang and Pleadwell.
+mouth is in the wrong place altogether, or too narrow, the face fit is off:
+place the lips by hand (below), as for Woofgang, Pleadwell and Grinbert.
 
 **The mouth line** is where the lips meet in the portrait, found when the cat
 is prepared. The fit is made for cats; on other faces it can land elsewhere.
