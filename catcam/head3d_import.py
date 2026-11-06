@@ -3,7 +3,8 @@ assets: the mesh, its texture with the cat's real eyes painted in from the
 portrait, and where every vertex and face landmark sits in the portrait, which
 is what lets the head take on the 2D cat's expressions.
 
-    uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name> [--own-mouth] [--animal dog]
+    uv run --with trimesh --with networkx python -m catcam.head3d_import <head.glb> <Name> \
+        [--own-mouth] [--animal dog]
 
 --own-mouth keeps the head's own mouth: no lips or mouth cavity are added. The
 import finds the head's own lower jaw instead and cuts it free along the slit

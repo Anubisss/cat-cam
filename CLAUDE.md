@@ -59,7 +59,7 @@ in their vertex shader, and blinks repaint only the texels near the lids.
   expressions, blinks and ears; `mouth3d.py` builds its teeth, tongue and
   mouth cavity, with a jaw that swings open. `head3d_import.py` turns a generated
   `.glb` head (e.g. from TRELLIS.2 or Meshy) into those assets:
-  `uv run --with trimesh python -m catcam.head3d_import <head.glb> <Name>`;
+  `uv run --with trimesh --with networkx python -m catcam.head3d_import <head.glb> <Name>`;
   with `--own-mouth` it keeps the head's own mouth instead, finding its lower
   jaw and cutting it free along the slit between the lips.
   The whole recipe, from installing TRELLIS.2 on to checking the result, is in

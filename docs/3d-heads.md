@@ -90,7 +90,7 @@ has the exact versions and fixes the heads were made with.
 2. **Import** it into Cat Cam, from the Cat Cam folder:
 
    ```sh
-   uv run --with trimesh python -m catcam.head3d_import ~/trellis-mac/out/<name>.glb <Name>
+   uv run --with trimesh --with networkx python -m catcam.head3d_import ~/trellis-mac/out/<name>.glb <Name>
    ```
 
    This writes `assets/cats/<Name>/head3d.npz` and `head3d.png`. It prints
@@ -173,7 +173,7 @@ instead of TRELLIS:
    one (see below), and `--animal dog` for a dog:
 
    ```sh
-   uv run --with trimesh python -m catcam.head3d_import <small.glb> <Name> --own-mouth
+   uv run --with trimesh --with networkx python -m catcam.head3d_import <small.glb> <Name> --own-mouth
    ```
 
 ## How the eyes and mouth work
