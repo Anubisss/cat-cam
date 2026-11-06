@@ -71,18 +71,21 @@ The rest of this page is for running it from the code instead.
       effect after a restart.
 
 4. **Optional: its voice.** For the call to hear barks and meows instead of
-   your voice, install the free BlackHole virtual microphone:
+   your voice, install the free **BlackHole 2ch** virtual microphone. No
+   Terminal needed:
+   1. Go to [existential.audio/blackhole](https://existential.audio/blackhole/),
+      choose **BlackHole 2ch** and enter your email address; the download link
+      arrives by email. (Or, if you use Homebrew: `brew install blackhole-2ch`.)
+   2. Double-click the downloaded `BlackHole2ch-….pkg` and click through the
+      installer. It asks for your Mac's password, as it installs an audio
+      driver.
+   3. **Restart the Mac**, so it loads the new microphone.
+   4. In Zoom, choose **BlackHole 2ch** as the microphone (*Settings → Audio →
+      Microphone*).
 
-   ```sh
-   brew install blackhole-2ch
-   ```
-
-   It asks for your Mac's password, as it installs an audio driver. If Cat
-   Cam then says BlackHole isn't loaded yet, run `sudo killall coreaudiod`
-   (or restart the Mac). Then, in Zoom, choose **BlackHole 2ch** as the
-   microphone (*Settings → Audio → Microphone*). Cat Cam listens to your
-   real microphone and sends the animal's sounds there. Without BlackHole
-   everything else works, and the call hears your real voice.
+   Cat Cam listens to your real microphone and sends the animal's sounds to
+   BlackHole. Without BlackHole everything else works, and the call hears
+   your real voice.
 
 5. **Get the code**:
 

@@ -26,10 +26,14 @@ INSTALL (once)
    Applications). Then quit Cat Cam and open it again.
 
 6. Optional, for barks and meows instead of your voice in the call:
-   install the free BlackHole 2ch virtual microphone
-   (https://existential.audio/blackhole/, or "brew install blackhole-2ch"
-   in Terminal; it asks for your Mac's password), then restart the Mac
-   and Cat Cam.
+   install the free BlackHole 2ch virtual microphone. No Terminal needed:
+   - Go to https://existential.audio/blackhole/ , choose "BlackHole 2ch"
+     and enter your email address; the download link arrives by email.
+   - Double-click the downloaded BlackHole2ch file and click through the
+     installer. It asks for your Mac's password (it installs an audio
+     driver).
+   - Restart the Mac.
+   - In Zoom: Settings > Audio > Microphone > "BlackHole 2ch".
 
 USE
 
