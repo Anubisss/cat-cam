@@ -1,0 +1,6 @@
+# How Pleadwell's mews follow your voice (see Style in catcam/voice.py).
+# Pleading: soft high mews that are given time to droop at the end.
+pitch_follow = 0.8  # mew semitones per semitone you go above or below your usual pitch
+jitter = 0.3  # semitones of random pitch per mew
+shortest = 0.3  # s a mew plays at least, even for the shortest syllable
+release = 0.15  # s it fades out over when your syllable ends

@@ -7,8 +7,10 @@ with your head, copies your whole face (brows, blinks, cheeks, smile) and opens
 its own mouth with yours, its jaw swinging down to show teeth and tongue, while
 the side of its head that turns away from the light falls into shadow. Your
 hands become its paws, toe by toe: the top of the paw when you show the back of
-your hand, the toe beans when you show your palm. When you talk as Woofgang,
-the call hears him bark instead of your voice. When you sit still, your animal
+your hand, the toe beans when you show your palm. When you talk, the call
+hears your animal instead of your voice: Woofgang barks, and every cat has a
+voice of its own, from Grinbert's chirpy trills to Grumbledore's deep old
+grumbles. When you sit still, your animal
 breathes and looks around on its own. And you can put any picture or video
 behind it.
 
@@ -67,17 +69,19 @@ The rest of this page is for running it from the code instead.
    4. **Quit and reopen the terminal app** (⌘Q). The permission only takes
       effect after a restart.
 
-4. **Optional: his voice.** For the call to hear barks instead of your voice,
-   install the free BlackHole virtual microphone:
+4. **Optional: its voice.** For the call to hear barks and meows instead of
+   your voice, install the free BlackHole virtual microphone:
 
    ```sh
    brew install blackhole-2ch
    ```
 
-   Then, in Zoom, choose **BlackHole 2ch** as the microphone (*Settings →
-   Audio → Microphone*). Cat Cam listens to your real microphone and sends
-   the barks there. Without BlackHole everything else works, and the call
-   hears your real voice.
+   It asks for your Mac's password, as it installs an audio driver. If Cat
+   Cam then says BlackHole isn't loaded yet, run `sudo killall coreaudiod`
+   (or restart the Mac). Then, in Zoom, choose **BlackHole 2ch** as the
+   microphone (*Settings → Audio → Microphone*). Cat Cam listens to your
+   real microphone and sends the animal's sounds there. Without BlackHole
+   everything else works, and the call hears your real voice.
 
 5. **Get the code**:
 
@@ -126,9 +130,12 @@ behind the animal, in place of the plain backdrop. A video plays on a loop.
 Turn it off and on again to pick another.
 
 When you talk (and BlackHole is set up, see above), every syllable you say
-comes out as a bark, as loud and as high or low as you said it. When you sit
-still and quiet for a few seconds, he breathes, sways and looks around on his
-own, until you move or talk again.
+comes out as your animal's sound, as loud and as high or low as you said it:
+Woofgang barks, Grinbert trills, Pleadwell mews softly and pleadingly,
+Meringue meows long and bored, Grumpkin grumbles, Wrinklestiltskin yowls
+with a rasp, Gingersnap goes "mrrp?" and Grumbledore grumbles deep and slow.
+When you sit still and quiet for a few seconds, your animal breathes, sways
+and looks around on its own, until you move or talk again.
 
 Press `1` to `8` (in the Cat Cam window, while the picker is closed) for an
 emoji reaction beside your animal, which the call sees too: 1 🫵 points at
@@ -163,7 +170,8 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
 ```
 
 `uv run python -m catcam.voice --list` lists the microphones;
-`uv run python -m catcam.voice` lets you hear the barks in your headphones.
+`uv run python -m catcam.voice` lets you hear the barks in your headphones
+(`--cat Grumbledore` for another animal's voice).
 
 ## Troubleshooting
 
@@ -177,7 +185,7 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
 | "Looking for your face..." | Face the camera and make sure your face is lit. |
 | The call hears your real voice | Choose **BlackHole 2ch** as the microphone in Zoom. If Cat Cam says no virtual microphone was found, install BlackHole (see above) and restart Cat Cam. |
 | "BlackHole is installed but macOS hasn't loaded it yet" | Run `sudo killall coreaudiod` (or restart the Mac), then restart Cat Cam. |
-| No barks at all | Allow microphone access for your terminal under *System Settings → Privacy & Security → Microphone*. |
+| No barks or meows at all | Allow microphone access for your terminal under *System Settings → Privacy & Security → Microphone*. |
 
 ## Add your own cat
 
@@ -206,6 +214,10 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
 4. Optionally give it a 3D head, generated from the same portrait on your
    Mac or with Meshy: see [docs/3d-heads.md](docs/3d-heads.md). A cat that
    only exists as a Meshy model gets its portrait rendered from the model.
+5. Optionally give it a voice: a few short sounds (`.ogg`, `.wav`, `.flac`
+   or `.mp3`) in `assets/cats/<Name>/voice/`, one played per syllable, and a
+   `voice.toml` next to them for how they follow your voice (copy one from
+   another cat). Without sounds, the call hears your own voice.
 
 ## Tuning
 
@@ -225,6 +237,7 @@ These constants sit at the top of their files:
 | `JAW_HINGE`, `OWN_JAW_MAX` | `catcam/head3d.py` | where a 3D head's own jaw swings from, and how far it opens |
 | `STILL_AFTER`, `BREATHING`, `SWAY`, `LOOK` | `catcam/idle.py` | how long you must be still before he acts on his own, his breathing, his sway, and how far he looks around |
 | `ABOVE_NOISE`, `MIN_GAP`, `PITCH_FOLLOW` | `catcam/voice.py` | how loud you must talk to bark, the shortest time between barks, and how much the bark's pitch follows yours |
+| `pitch_follow`, `jitter`, `shortest`, `release` | `assets/cats/<Name>/voice/voice.toml` | per animal: how much its sounds' pitch follows yours, how much it varies, and how long a sound plays at least and fades out after your syllable |
 | `SIZE`, `CENTRE`, `DURATION` | `catcam/reactions.py` | how big the emoji reactions are, where they sit and how long they stay |
 
 ## How it works
@@ -261,8 +274,9 @@ These constants sit at the top of their files:
    top, from the Mac's emoji font (`catcam/reactions.py`).
 8. The frame goes to the OBS virtual camera through pyvirtualcam. Your
    microphone goes through `catcam/voice.py`, which finds the syllables in
-   your loudness and plays a bark for each, out to the BlackHole virtual
-   microphone.
+   your loudness and plays one of the animal's sounds for each (a bark, a
+   meow, a trill...), out to the BlackHole virtual microphone. An animal's
+   `voice/voice.toml` says how its sounds follow your voice.
 
 ## Development
 
@@ -293,7 +307,7 @@ catcam/
   face_motion.py   expression transfer
   head_pose.py     head rotation and the One Euro smoothing filter
   idle.py          what the animal does by itself while you are still
-  voice.py         your voice as barks, out to the virtual microphone
+  voice.py         your voice as barks or meows, out to the virtual microphone
   background.py    a picture or video behind the animal
   reactions.py     emoji reactions on the number keys
   paws.py          paws
@@ -310,7 +324,8 @@ assets/cats/       prepared cats (cutout + face points, 3D heads), used at runti
 assets/mouth/      3D teeth, gums, palate and tongue, a cat's and a dog's
 docs/3d-heads.md   how to make a 3D head
 tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet, the mouth model;
-                   tracking_eval.py measures face tracking on recorded webcam clips
+                   tracking_eval.py measures face tracking on recorded webcam clips;
+                   cat_voices.py makes the cats' voices from CC0 recordings
 models/            MediaPipe face and hand models
 packaging/         the standalone macOS app: PyInstaller spec, icon, build script
 ```
@@ -319,3 +334,17 @@ The MediaPipe models in `models/` are by Google and licensed under Apache 2.0.
 Woofgang's bark (`assets/cats/Woofgang/voice/bark.ogg`) is CC0: a recording by
 Geoff-Bremner-Audio on [Freesound](https://freesound.org/s/688201/), as cleaned
 up for [Space Station 14](https://github.com/space-wizards/space-station-14).
+
+The cats' voices (`assets/cats/<Name>/voice/*.ogg`) are made by
+`tools/cat_voices.py` from these Freesound recordings, all CC0 (public
+domain), cut into single meows and changed in pitch, speed and tone:
+
+| Cat | Recordings |
+|-----|------------|
+| Grinbert | ["Cat Meow.aif"](https://freesound.org/s/455493/) by Wrenasmir, ["Cat Politely Meowing"](https://freesound.org/s/669532/) by HECKFRICKER, ["cat chirp.wav"](https://freesound.org/s/451250/) by dreamstobecome |
+| Pleadwell | ["Cat Politely Meowing"](https://freesound.org/s/669532/) by HECKFRICKER, ["meow-1.wav"](https://freesound.org/s/686775/) by nathan-osman, ["Begging Meow"](https://freesound.org/s/732521/) by Lukey1028, ["Kitten mewing / young baby cat meowing"](https://freesound.org/s/735643/) by XxTamisxx |
+| Meringue | ["Cat, Meows 3x"](https://freesound.org/s/741166/) by Kinoton, ["cat meow short"](https://freesound.org/s/412017/) by skymary, ["Cat Meow"](https://freesound.org/s/381783/) by ghostlung |
+| Grumpkin | ["AnnoyedCatMeowsGruntsVowels.wav"](https://freesound.org/s/541264/) by sweet_niche |
+| Wrinklestiltskin | ["Siamese Cat Yowls"](https://freesound.org/s/826683/) by tcurless, ["Cat meowing raspy"](https://freesound.org/s/757185/) by HenKonen |
+| Gingersnap | ["AnnoyedCatMeowsGruntsVowels.wav"](https://freesound.org/s/541264/) by sweet_niche, ["Pearl mmrrovvv sound"](https://freesound.org/s/844502/) by Sadiquecat |
+| Grumbledore | ["Old cat meowing"](https://freesound.org/s/338819/) by cabled_mess, ["Coco meow 17 year old cat"](https://freesound.org/s/724090/) by FreqWincy |

@@ -25,9 +25,11 @@ INSTALL (once)
    on Cat Cam (if it isn't listed, click + and choose Cat Cam from
    Applications). Then quit Cat Cam and open it again.
 
-6. Optional, for barks instead of your voice in the call: install the free
-   BlackHole 2ch virtual microphone (https://existential.audio/blackhole/,
-   or "brew install blackhole-2ch" in Terminal), then restart Cat Cam.
+6. Optional, for barks and meows instead of your voice in the call:
+   install the free BlackHole 2ch virtual microphone
+   (https://existential.audio/blackhole/, or "brew install blackhole-2ch"
+   in Terminal; it asks for your Mac's password), then restart the Mac
+   and Cat Cam.
 
 USE
 
@@ -44,8 +46,9 @@ USE
 - Turn on "Background" (or press B) and pick a picture or video to put
   behind the animal. Turn it off and on again to pick another.
 - With BlackHole installed, choose "BlackHole 2ch" as the microphone in
-  Zoom (Settings > Audio > Microphone): as Woofgang the dog, the call
-  hears a bark for every syllable you say, never your voice.
+  Zoom (Settings > Audio > Microphone): the call hears your animal's sound
+  for every syllable you say, never your voice. Woofgang barks, and every
+  cat has its own voice: trills, mews, meows, grumbles or yowls.
 - Sit still and quiet for a few seconds and your animal breathes and looks
   around on its own.
 - Press 1 to 8 in the Cat Cam window for an emoji reaction next to your

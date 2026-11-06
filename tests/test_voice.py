@@ -7,10 +7,15 @@ from catcam.voice import (
     MIN_GAP,
     PITCH_WINDOW,
     RATE,
+    STYLE_FILE,
+    Sounds,
+    Style,
     Syllables,
     Voice,
     estimate_pitch,
     find_device,
+    load_sounds,
+    load_style,
     pick_mic,
 )
 
@@ -91,7 +96,7 @@ def _say(voice, signal):
 
 def _dog(rng_seed=0):
     voice = Voice(np.random.default_rng(rng_seed))
-    voice.sounds = [np.sin(np.linspace(0, 400, int(0.35 * RATE))).astype(np.float32)]
+    voice.sounds = Sounds((np.sin(np.linspace(0, 400, int(0.35 * RATE))).astype(np.float32),))
     return voice
 
 
@@ -149,7 +154,7 @@ def test_syllables_become_barks_as_loud_as_you_spoke():
     outputs = []
     for amplitude in (0.01, 0.2):
         voice = Voice(np.random.default_rng(0))
-        voice.sounds = [bark]
+        voice.sounds = Sounds((bark,))
         out = _speak(voice, [0.0005] * 30 + [amplitude] * 12 + [0.0005] * 30)
         assert np.abs(out[:30 * BLOCK]).max() == 0  # nothing before you speak
         outputs.append(np.abs(out).max())
@@ -183,11 +188,69 @@ def test_never_listens_to_the_virtual_microphone():
     assert pick_mic(devices[1:2], 0) is None
 
 
-def test_only_the_dog_barks(real_cats):
+def test_every_animal_has_its_own_voice(real_cats):
+    styles = set()
     for cat in real_cats:
-        assert bool(cat.sounds) == (cat.name == "Woofgang"), cat.name
-    woofgang = next(cat for cat in real_cats if cat.name == "Woofgang")
-    assert len(woofgang.sounds) == 1  # one bark
-    for sound in woofgang.sounds:
-        assert sound.dtype == np.float32 and sound.ndim == 1
-        assert 0.1 * RATE < len(sound) < RATE
+        clips = cat.sounds.clips
+        if cat.name == "Woofgang":
+            assert len(clips) == 1 and cat.sounds.style == Style()  # one bark, the default style
+        else:
+            assert len(clips) >= 5, cat.name  # several, so it doesn't repeat itself
+            styles.add(cat.sounds.style)
+        for sound in clips:
+            assert sound.dtype == np.float32 and sound.ndim == 1
+            assert 0.15 * RATE < len(sound) < 2 * RATE, cat.name
+    assert len(styles) == len(real_cats) - 1  # every cat follows your voice in its own way
+
+
+def test_voices_are_small(real_cats):
+    from catcam.paths import ASSETS
+
+    for cat in real_cats:
+        files = list((ASSETS / cat.name / "voice").iterdir())
+        assert {f.suffix for f in files} <= {".ogg", ".toml"}, cat.name
+        assert sum(f.stat().st_size for f in files) < 150_000, cat.name
+
+
+def test_a_voice_toml_sets_the_style(tmp_path):
+    soundfile = pytest.importorskip("soundfile")
+    soundfile.write(str(tmp_path / "meow.wav"), np.sin(np.linspace(0, 300, RATE // 2)), RATE)
+    assert load_sounds(tmp_path).style == Style()  # no file: the defaults
+    (tmp_path / STYLE_FILE).write_text("shortest = 0.4  # s\nrelease = 0.3\n")
+    sounds = load_sounds(tmp_path)
+    assert len(sounds.clips) == 1  # the toml isn't taken for a sound
+    assert sounds.style == Style(shortest=0.4, release=0.3)  # the rest stays as it was
+    assert not load_sounds(tmp_path / "missing")
+
+
+def test_a_bad_voice_toml_says_what_is_wrong(tmp_path):
+    path = tmp_path / STYLE_FILE
+    path.write_text("lenght = 0.4\n")
+    with pytest.raises(ValueError, match="unknown setting lenght"):
+        load_style(path)
+    path.write_text('release = "long"\n')
+    with pytest.raises(ValueError, match="release must be a number"):
+        load_style(path)
+    path.write_text("jitter = -1\n")
+    with pytest.raises(ValueError, match="jitter"):
+        load_style(path)
+
+
+def test_a_meow_style_plays_on_after_a_short_syllable():
+    pause = np.zeros(int(0.5 * RATE), np.float32)
+    syllable = np.concatenate([pause, _voice(0.06, 120), pause])
+    meow = np.sin(np.linspace(0, 1500, RATE)).astype(np.float32)  # 1 s
+    lengths = []
+    for style in (Style(), Style(shortest=0.4, release=0.3)):
+        voice = Voice(np.random.default_rng(0))
+        voice.sounds = Sounds((meow,), style)
+        lengths.append(_sounding(_say(voice, syllable)[0]))
+    assert lengths[0] < 0.16 and lengths[1] > 0.45  # at least `shortest`, then fading
+
+
+def test_the_same_sound_never_plays_twice_in_a_row():
+    voice = Voice(np.random.default_rng(0))
+    picks = [voice._pick(3) for _ in range(200)]
+    assert set(picks) == {0, 1, 2}
+    assert all(a != b for a, b in zip(picks, picks[1:]))
+    assert voice._pick(1) == 0  # unless there is only one

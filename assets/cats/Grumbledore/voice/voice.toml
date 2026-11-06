@@ -1,0 +1,6 @@
+# How Grumbledore's grumbles follow your voice (see Style in catcam/voice.py).
+# Old and slow: deep grumbles that take their time, whatever your tone.
+pitch_follow = 0.3  # grumble semitones per semitone you go above or below your usual pitch
+jitter = 0.15  # semitones of random pitch per grumble
+shortest = 0.5  # s a grumble plays at least, even for the shortest syllable
+release = 0.4  # s it fades out over when your syllable ends

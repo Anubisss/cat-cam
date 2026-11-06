@@ -1,0 +1,6 @@
+# How Grumpkin's grumbles follow your voice (see Style in catcam/voice.py).
+# Grumbly: low "mrrr"s that only half follow your tone.
+pitch_follow = 0.5  # grumble semitones per semitone you go above or below your usual pitch
+jitter = 0.3  # semitones of random pitch per grumble
+shortest = 0.25  # s a grumble plays at least, even for the shortest syllable
+release = 0.12  # s it fades out over when your syllable ends

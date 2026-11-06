@@ -1,0 +1,6 @@
+# How Meringue's meows follow your voice (see Style in catcam/voice.py).
+# Posh and bored: long, drawn-out meows that barely care how you said it.
+pitch_follow = 0.4  # meow semitones per semitone you go above or below your usual pitch
+jitter = 0.2  # semitones of random pitch per meow
+shortest = 0.45  # s a meow plays at least, even for the shortest syllable
+release = 0.35  # s it fades out over when your syllable ends

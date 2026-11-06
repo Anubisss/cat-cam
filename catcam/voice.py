@@ -1,17 +1,24 @@
 """Your voice, as your animal's.
 
 While you talk, every syllable you say comes out as the animal's sound (the
-dog barks), shaped like you said it: as loud, higher or lower as your voice
-goes above or below its usual pitch, and as long: a bark fades out when your
-syllable ends and is cut off when the next one starts, so quick talk gives
-quick, clipped barks. It goes to a virtual microphone (BlackHole), which the
-call uses instead of your real one, so your own voice is never heard. With an
-animal that has no sounds, your voice passes through unchanged.
+dog barks, the cats meow, trill or grumble), shaped like you said it: as
+loud, higher or lower as your voice goes above or below its usual pitch, and
+as long: a sound fades out when your syllable ends and is cut off when the
+next one starts, so quick talk gives quick, clipped barks. It goes to a
+virtual microphone (BlackHole), which the call uses instead of your real one,
+so your own voice is never heard. With an animal that has no sounds (or the
+app's Voice switch off), your voice passes through unchanged.
+
+An animal's sounds are in assets/cats/<Name>/voice/. A voice.toml next to them
+can change how they follow your voice (see Style): a long meow, say, plays on
+for longer after your syllable than a bark does.
 
 Syllables are found in your loudness: one starts where it rises clearly above
 both the background noise and the dip after the previous syllable.
 """
 
+import tomllib
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +28,7 @@ BLOCK = 480  # samples per audio block, 10 ms
 VIRTUAL_MIC = "BlackHole"  # the output device whose name contains this
 BUILT_IN_MIC = ("MacBook", "Built-in")  # names of the microphone used when the default is the virtual one
 SOUND_TYPES = (".ogg", ".wav", ".flac", ".mp3")
+STYLE_FILE = "voice.toml"  # optional, next to the sounds, see Style
 
 # Loudness in dB of full scale.
 SILENCE = -55.0  # quieter than this is never speech
@@ -38,7 +46,7 @@ LOUD_PITCH = 2.0  # semitones higher for the loudest barks
 PITCH_RANGE = (70.0, 400.0)  # Hz of a speaking voice
 PITCH_WINDOW = 0.04  # s of your voice it is measured on
 VOICING = 0.5  # autocorrelation peak needed to count as a pitch, not a hiss
-PITCH_FOLLOW = 0.7  # bark semitones per semitone you are above or below your usual pitch
+PITCH_FOLLOW = 0.7  # sound semitones per semitone you are above or below your usual pitch
 PITCH_LIMIT = 7.0  # semitones the bark goes up or down at most
 USUAL_PITCH_ADAPT = 0.1  # how quickly your usual pitch adapts, per syllable
 JITTER = 0.25  # semitones of random pitch, so repeated barks differ a little
@@ -49,19 +57,55 @@ RELEASE = 0.04  # fade-out when your syllable ends
 CUT = 0.012  # fade-out when the next syllable starts
 
 
-def load_sounds(folder: Path) -> list[np.ndarray]:
-    """The sounds in folder as mono float32 at RATE, peaking at 0.9; empty if none."""
+@dataclass(frozen=True)
+class Style:
+    """How an animal's sounds follow your voice. The defaults suit barks; an
+    animal's voice.toml can set any of these, by the same names and units."""
+    pitch_follow: float = PITCH_FOLLOW  # sound semitones per semitone you go above or below your usual pitch
+    jitter: float = JITTER  # semitones of random pitch per sound
+    shortest: float = MIN_BARK  # s a sound plays at least, even for the shortest syllable
+    release: float = RELEASE  # s it fades out over when your syllable ends
+
+
+@dataclass(frozen=True)
+class Sounds:
+    """An animal's sounds and how they follow your voice; false if there are none."""
+    clips: tuple = ()  # mono float32 arrays at RATE
+    style: Style = Style()
+
+    def __bool__(self) -> bool:
+        return bool(self.clips)
+
+
+def load_style(path: Path) -> Style:
+    """The Style a voice.toml asks for, with the defaults for what it leaves out."""
+    with path.open("rb") as f:
+        values = tomllib.load(f)
+    known = {f.name for f in fields(Style)}
+    unknown = sorted(set(values) - known)
+    if unknown:
+        raise ValueError(f"{path}: unknown setting {', '.join(unknown)} (known: {', '.join(sorted(known))})")
+    for name, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+            raise ValueError(f"{path}: {name} must be a number of at least 0, not {value!r}")
+    return Style(**{name: float(value) for name, value in values.items()})
+
+
+def load_sounds(folder: Path) -> Sounds:
+    """The sounds in folder as mono float32 at RATE, peaking at 0.9, with the
+    style its voice.toml asks for; empty if there are none."""
     if not folder.is_dir():
-        return []
+        return Sounds()
     import soundfile
     from scipy.signal import resample_poly
 
-    sounds = []
+    clips = []
     for path in sorted(p for p in folder.iterdir() if p.suffix.lower() in SOUND_TYPES):
         samples, rate = soundfile.read(str(path), dtype="float32", always_2d=True)
         mono = resample_poly(samples.mean(axis=1), RATE, rate).astype(np.float32)
-        sounds.append(0.9 * mono / max(np.abs(mono).max(), 1e-6))
-    return sounds
+        clips.append(0.9 * mono / max(np.abs(mono).max(), 1e-6))
+    style = folder / STYLE_FILE
+    return Sounds(tuple(clips), load_style(style) if style.is_file() else Style())
 
 
 def _ramp(value, lo, hi):
@@ -144,15 +188,16 @@ class Voice:
     """Turns microphone blocks into what the virtual microphone sends."""
 
     def __init__(self, rng: np.random.Generator | None = None):
-        self.sounds: list[np.ndarray] = []  # the animal's; empty = your own voice
+        self.sounds = Sounds()  # the animal's; empty = your own voice
         self.syllables = Syllables()
         self.rng = rng or np.random.default_rng()
         self.recent = np.zeros(int(PITCH_WINDOW * RATE), np.float32)  # your latest voice
         self.usual_pitch = None  # log2 Hz, adapts to you
         self.barks: list[Bark] = []
+        self.last = None  # index of the clip played last, so the next is another one
 
-    def _semitones(self, pitch: float | None) -> float:
-        """How far your syllable is above your usual pitch, as bark semitones."""
+    def _semitones(self, pitch: float | None, follow: float) -> float:
+        """How far your syllable is above your usual pitch, as sound semitones."""
         if pitch is None:
             return 0.0
         octave = np.log2(pitch)
@@ -160,12 +205,19 @@ class Voice:
             self.usual_pitch = octave
         above = 12 * (octave - self.usual_pitch)
         self.usual_pitch += USUAL_PITCH_ADAPT * (octave - self.usual_pitch)
-        return float(np.clip(PITCH_FOLLOW * above, -PITCH_LIMIT, PITCH_LIMIT))
+        return float(np.clip(follow * above, -PITCH_LIMIT, PITCH_LIMIT))
 
-    def _bark(self, sounds: list[np.ndarray], above: float, pitch: float | None) -> Bark:
+    def _pick(self, count: int) -> int:
+        """A random clip, never the one just played (if there is another)."""
+        options = [i for i in range(count) if i != self.last] or [0]
+        self.last = options[int(self.rng.integers(len(options)))]
+        return self.last
+
+    def _bark(self, sounds: Sounds, above: float, pitch: float | None) -> Bark:
         loud = _ramp(above, *LOUDNESS)
-        semitones = self._semitones(pitch) + LOUD_PITCH * loud + self.rng.normal(0, JITTER)
-        sound = sounds[self.rng.integers(len(sounds))]
+        semitones = (self._semitones(pitch, sounds.style.pitch_follow) + LOUD_PITCH * loud
+                     + self.rng.normal(0, sounds.style.jitter))
+        sound = sounds.clips[self._pick(len(sounds.clips))]
         speed = 2 ** (semitones / 12)
         resampled = np.interp(np.arange(0, len(sound) - 1, speed), np.arange(len(sound)), sound)
         return Bark((GAIN[0] + loud * (GAIN[1] - GAIN[0])) * resampled.astype(np.float32))
@@ -185,8 +237,8 @@ class Voice:
             self.barks.append(self._bark(sounds, above, estimate_pitch(self.recent)))
         elif not self.syllables.speaking:
             for bark in self.barks:
-                if bark.position >= MIN_BARK * RATE:
-                    bark.stop(RELEASE)
+                if bark.position >= sounds.style.shortest * RATE:
+                    bark.stop(sounds.style.release)
         out = np.zeros(len(mic), np.float32)
         for bark in self.barks:
             part = bark.take(len(mic))
