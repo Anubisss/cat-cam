@@ -67,8 +67,14 @@ BEHIND_LIPS = 0.15  # face widths behind the lips' edge the jaw starts from what
 # The jaw is cut free only along the lips: within CUT_REACH face widths of the line
 # where they meet as seen from the front (however deep behind it), fading out over
 # CUT_FADE. Further along its edge (down the sides of the chin, under it) the skin
-# stretches instead, the jaw's pull fading over JAW_SOFT face widths across the edge.
-CUT_REACH, CUT_FADE, JAW_SOFT = 0.03, 0.02, 0.03
+# stretches instead: the jaw itself moves whole, and the skin round it follows less
+# and less over JAW_SOFT face widths (of the margin, see find_jaw) past its edge, so
+# the chin swings down in one piece and nothing tears or smears at its edge.
+CUT_REACH, CUT_FADE, JAW_SOFT = 0.03, 0.02, 0.12
+CORNER_CUT = 3  # past the mouth corners the cut's reach shrinks this many times faster
+# Beside the mouth the skin follows the jaw over only JAW_SOFT_NEAR, widening to
+# JAW_SOFT over SOFT_CLEAR face widths below the lowest point of the lips.
+JAW_SOFT_NEAR, SOFT_CLEAR = 0.02, 0.15
 # At the corners of the mouth the lips stay together, so it opens in a lens, not a slot,
 # and the corners keep following your face (a smile): from CORNER_START of the way out
 # from its middle, the jaw's pull on the lips fades to nothing at the corners and past
@@ -418,24 +424,28 @@ def find_jaw(vertices, faces, landmarks, by_lips, face_model):
     margin[~reached] = margin[reached][nearest]
     margin = np.array([margin[near].mean() for near in around])  # a smooth line to cut along
     # Only the jaw's own patch, the one with the chin: not specks of skin it happens to
-    # reach first elsewhere, nor a whisker hidden behind the lips.
+    # reach first elsewhere. Loose bits stay with the surface nearest them, though: a
+    # tuft of the chin's fur is a patch of its own, and left behind it would be torn.
     chin = np.unique(tree.query(landmarks[JAW_SEEDS])[1])
     patch = margin > 0
     _, label = connected_components(graph[patch][:, patch], directed=False)
     labels = np.full(n, -1)
     labels[patch] = label
-    stray = patch & ~np.isin(labels, labels[chin])
+    on_skin = np.isin(labels, labels[patch & reached])
+    stray = patch & on_skin & ~np.isin(labels, labels[chin])
     margin[stray] = -margin[stray]
     near, far = JAW_REACH
     reach = np.linalg.norm(points - landmarks[[14, 17]].mean(axis=0), axis=1) / face_model
     return margin[weld], (1 - smoothstep((reach - near) / (far - near)))[weld]
 
 
-def cut_jaw(attributes: dict, faces, margin, reach, cut=None):
+def cut_jaw(attributes: dict, faces, margin, reach, cut=None, soft=None):
     """Cuts the jaw free along the line where margin is 0 (see find_jaw), so it opens
     without stretching skin: the faces across that line are split along it, and its
     points are made twice, once for each side. cut: per vertex, 0..1, how much the
-    edge there is cut rather than stretched (default: all of it). attributes:
+    edge there is cut rather than stretched (default: all of it); soft: per vertex,
+    over how much margin past the jaw's edge the skin there follows it (default:
+    JAW_SOFT). attributes:
     per-vertex arrays, carried over onto the new points; returns them, the faces and
     each vertex's jaw weight (reach on the jaw's side, 0 on the face's where cut;
     blending across the edge where stretched)."""
@@ -461,7 +471,8 @@ def cut_jaw(attributes: dict, faces, margin, reach, cut=None):
         on_line = values[a] + t.reshape(-1, *[1] * (values.ndim - 1)) * (values[b] - values[a])
         out[name] = np.concatenate([values, on_line, on_line])  # the face's copy, then the jaw's
     along = lambda values: values[a] + t * (values[b] - values[a])  # noqa: E731
-    stretch = smoothstep(margin / JAW_SOFT + 0.5)
+    soft = np.full(n, JAW_SOFT) if soft is None else soft
+    stretch = smoothstep(margin / soft + 1)
     pull = reach * (hard * on_jaw + (1 - hard) * stretch)
     line_reach, line_hard = along(reach), along(hard)
     jaw = np.concatenate([pull, line_reach * (1 - line_hard) / 2, line_reach * (1 + line_hard) / 2])
@@ -558,11 +569,19 @@ def import_glb(glb: str, name: str, own_mouth: bool = False, animal: str = "cat"
         margin, reach = find_jaw(vertices, faces, landmarks, (below, above), face_model)
         n = len(vertices)
         lips_model = on_model(edge - (0, 2 * LIP_EDGE_SPAN * face_width))  # on the upper lip's edge
-        seen = cKDTree((lips_model @ cam.rot.T)[:, :2])  # from the front
-        lips = seen.query((vertices @ cam.rot.T)[:, :2])[0] / face_model
+        front_lips, front = (lips_model @ cam.rot.T)[:, :2], (vertices @ cam.rot.T)[:, :2]
+        lips = cKDTree(front_lips).query(front)[0] / face_model
+        # Past the mouth corners the jaw's edge runs down the cheeks: cut there, it
+        # would open a slit down from each corner, so the cut ends soon past them.
+        past = np.maximum(front_lips[:, 0].min() - front[:, 0], front[:, 0] - front_lips[:, 0].max())
+        lips = lips + CORNER_CUT * past.clip(0) / face_model
         cut = 1 - smoothstep((lips - CUT_REACH) / CUT_FADE)
+        # Beside the mouth (its corners, a dog's cheeks) the skin round the jaw follows it
+        # only just past its edge; below the mouth, round the chin, it stretches wide.
+        below = (front_lips[:, 1].min() - front[:, 1]) / face_model
+        soft = JAW_SOFT_NEAR + (JAW_SOFT - JAW_SOFT_NEAR) * smoothstep(below / SOFT_CLEAR)
         attributes = {"vertices": vertices, "normals": normals, "uv": uv, "photo_px": photo_px}
-        parts, faces, jaw = cut_jaw(attributes, faces, margin, reach, cut)
+        parts, faces, jaw = cut_jaw(attributes, faces, margin, reach, cut, soft)
         vertices, normals, uv, photo_px = (parts[k] for k in ("vertices", "normals", "uv", "photo_px"))
         normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
         jaw = jaw * corners_together(vertices, lips_model, cam, face_model).astype(np.float32)

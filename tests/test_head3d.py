@@ -140,3 +140,23 @@ def test_blinks_repaint_the_eyes_and_open_again(woofgang):
     assert (closed != rest).any()
     assert np.array_equal(head.render(woofgang.sprite, still, np.eye(3)), rest)
     assert np.array_equal(head.painted, painted)
+
+
+def test_own_mouth_keeps_its_lips_and_chin_in_place():
+    """Wide open with your upper lip raised and your chin dropping far: Grinbert's upper
+    lip stays clear of his nose, and his chin goes with his jaw instead of on down."""
+    grinbert = cats.load("Grinbert")
+    renderer = Renderer(OUT)
+    flat = CatMesh(renderer, grinbert.sprite, grinbert.points, BG)
+    head = head3d.Head3D(renderer, "Grinbert", flat, grinbert.sprite, grinbert.points, BG)
+    width = np.ptp(grinbert.points[:, 0])
+    moves = np.zeros((478, 3))
+    moves[head3d.UPPER_LIP, 1] = -0.3 * width  # far past the nose
+    moves[head3d.LOWER_LIP, 1] = moves[152, 1] = 0.5 * width
+    kept = head._with_the_jaw(head._upper_lip_kept(moves))
+    nose = grinbert.points[head3d.NOSE[1], 1]
+    assert np.all(grinbert.points[head3d.UPPER_LIP, 1] + kept[head3d.UPPER_LIP, 1] > nose)
+    jaw = head._own_jaw(kept)
+    swing = (head.landmarks[152] @ jaw[:3, :3].T + jaw[:3, 3] - head.landmarks[152]) @ head.to_px.T
+    assert np.allclose(kept[152], swing, rtol=0.1)  # its lower lip, now no lower, opens it a little less
+    assert kept[152, 1] < 0.25 * width

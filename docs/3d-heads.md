@@ -243,7 +243,12 @@ that:
 - **Cutting it free:** along the lips, the faces across that line are split
   along it, and every point on it is made twice, once for each side, so the
   lips part cleanly. Further along the jaw's edge (down the sides of the
-  chin, under it) the skin stretches instead, as a real one does.
+  chin, under it) the skin stretches instead, as a real one does: the jaw
+  itself moves whole, and the skin round it follows it less and less over a
+  band past its edge, narrow beside the mouth and wide round the chin
+  (`JAW_SOFT_NEAR`, `JAW_SOFT`), so the chin swings down in one piece. The
+  cut ends soon past the mouth corners (`CORNER_CUT`), so no slit opens down
+  the cheeks.
 - **Its inside:** between the parted lips the app draws whatever the model
   has there (never seen, so its texture is guesswork) as the dark inside of
   the mouth, and so are the head's back faces just round it.
@@ -251,9 +256,15 @@ that:
   the lips meet in the middle (the upper lip's rim there, so the teeth hang
   right behind it) and how wide the slit is. Teeth or tongue that
   would poke out through the skin anywhere are not drawn there.
-- **Opening it:** the jaw swings about a hinge behind the mouth corners, where
-  a dog's jaw joint is (`JAW_HINGE` in `catcam/head3d.py`), as far as your
-  lower lip drops, up to `OWN_JAW_MAX`. Toward the mouth corners less and
+- **Opening it:** the jaw swings about a hinge well behind the mouth, where
+  a jaw joint is (`JAW_HINGE` in `catcam/head3d.py`, in face widths, so a
+  small mouth still has a long jaw), as far as your lower lip drops, up to a
+  gape of `OWN_GAPE_MAX` mouth widths and `OWN_JAW_MAX`. Everything below the
+  lips goes where the jaw takes it, the lower lip no lower: your chin drops
+  further than the jaw opens, and skin following it there would tear off
+  the jaw. The upper lip hangs from the nose: as yours rises (opening wide,
+  smiling), the animal's moves at most `UPPER_LIP_TRAVEL` of its distance
+  from the nose, so the opening never rides up into the nose. Toward the mouth corners less and
   less of the jaw swings (`CORNER_START`, `CORNER_DEPTH` in
   `catcam/head3d_import.py`), so the lips stay together there and the
   opening is lens-shaped rather than a slot. Beyond the swing the lower lip

@@ -36,6 +36,7 @@ FALLOFF = 0.25  # wide, so the whole lower jaw and chin move together instead of
 # Near the mouth, vertices only follow landmarks on their own side of the lips, so the
 # lips part instead of stretching: this far past the mouth corners and above/below the lip line.
 MOUTH_ZONE = (0.06, 0.15)
+SIDES_FADE = 0.4  # with its own jaw, the outer share of that zone over which the rule fades out
 # Face widths: only skin this close to a face landmark (in 3D) counts as the lips; the back
 # of the head lines up with the mouth in the portrait too.
 ON_FACE = 0.1
@@ -48,10 +49,20 @@ LOWER_LIP = LOWER_INNER_LIP[1:-1] + OUTER_LIPS[12:]  # its landmarks, without th
 JAW_MAX = 1.0  # radians, the most the jaw tilts; beyond that it just drops with the lip
 BREATH_RISE = 0.008  # head heights a full breath lifts the head by
 # A head with its own jaw (see catcam.head3d_import) opens it about a hinge this
-# far from the middle of its lips (mouth widths: right, up, out of the mouth), at
-# most OWN_JAW_MAX radians.
-JAW_HINGE = (0.0, 0.1, -1.35)
+# far from the middle of its lips (face widths: right, up, out of the mouth), where
+# a jaw joint is, at most OWN_JAW_MAX radians. In face widths, not mouth widths: a
+# small mouth doesn't make a short jaw, and about a hinge just behind the lips the
+# chin would swing back into the throat instead of down.
+JAW_HINGE = (0.0, 0.04, -0.55)
 OWN_JAW_MAX = 0.5
+OWN_GAPE_MAX = 1.0  # mouth widths: the most its lips part, so a small mouth opens round, not in a slot
+# A cat's upper lip hangs from its nose: whatever yours does (rising as you smile or
+# open wide), each point of it moves up or down from where the nose goes by at most
+# UPPER_LIP_TRAVEL of how far it is from the nose, so it never rides up into the nose
+# nor drags it down.
+UPPER_LIP = UPPER_INNER_LIP + OUTER_LIPS[:11]
+NOSE = [1, 2, 4, 5, 98, 327, 195, 197, 48, 278]  # landmarks around the nose
+UPPER_LIP_TRAVEL = 0.5
 MOUTH_BOX = 0.3  # how far round the jaw (shares of its size on screen) the head's inside may show
 OWN_MOUTH_INSIDE = (0.16, 0.06, 0.06)  # RGB of a head's own inside, seen between its parted lips
 LID_REACH = 2  # portrait px: texels sampled this close to where the lids are drawn take part in blinks
@@ -300,8 +311,18 @@ def follow_weights(vertices, photo_px, landmarks, points, face_model, face_width
     near_mouth, vertex_below, _, below = lip_sides(photo_px, points, face_width)
     if on_jaw is None:
         weights[near_mouth[:, None] & (below[nearest] != vertex_below[:, None])] = 0
-    else:  # below the lips only the jaw moves, about its hinge; the skin around it goes along with it
-        weights[below[nearest] != on_jaw[:, None]] = 0
+    else:
+        # By the lips, the jaw follows only what is below them and the face only what is
+        # above, so the lips part. Away from them that fades: all of a vertex's nearest
+        # landmarks can be on the other side (beside the chin), and following none of
+        # them it would stay put while its neighbours move, tearing the skin between.
+        seam = (points[UPPER_INNER_LIP, :2] + points[LOWER_INNER_LIP, :2]) / 2
+        reach_x, reach_y = (r * face_width for r in MOUTH_ZONE)
+        x, y = photo_px[:, 0], photo_px[:, 1]
+        past = np.maximum(seam[:, 0].min() - x, x - seam[:, 0].max()).clip(0) / reach_x
+        off = np.maximum(np.abs(y - lip_line(points)(x)) / reach_y, past)
+        by_lips = 1 - np.clip((off - (1 - SIDES_FADE)) / SIDES_FADE, 0, 1)
+        weights *= np.where(below[nearest] != on_jaw[:, None], 1 - by_lips[:, None], 1)
     total = weights.sum(axis=1, keepdims=True)
     weights = np.where(total > 0, weights / np.maximum(total, 1e-12), 0)
     falloff = np.exp(-((dist[:, 0] / (FALLOFF * face_model)) ** 2))
@@ -378,6 +399,8 @@ class Head3D:
         face_width = np.ptp(points[:, 0])
         self.rigid = lip_sides(self.photo_px, points, face_width)[3]  # below the lips...
         self.rigid[LOWER_LIP] = False  # ...but for the lower lip
+        # How far each point of the upper lip is from the nose (portrait px, see UPPER_LIP_TRAVEL).
+        self.lip_travel = UPPER_LIP_TRAVEL * cKDTree(points[NOSE, :2]).query(points[UPPER_LIP, :2])[0]
         jaw = mesh["jaw_weight"] if "jaw_weight" in mesh.files else np.zeros(0)
         self.jaw_weight = jaw.astype(np.float64)[:, None] if len(jaw) else None
         self.follow = follow_weights(self.rest, self.photo_px, self.landmarks, points,
@@ -413,7 +436,7 @@ class Head3D:
         self.prog["moves"].value = 2
         self.moves = ctx.texture((len(points), 2), 3, dtype="f4")  # rows: the landmarks' moves, and _beyond
         self.moves.filter = (moderngl.NEAREST, moderngl.NEAREST)
-        face_model = face_width / float(mesh["cam_scale"])
+        face_model = self.face_model = face_width / float(mesh["cam_scale"])
         on_face = cKDTree(self.landmarks).query(self.rest)[0] < ON_FACE * face_model
         self.lip_cut = mesh["lip_cut"] if "lip_cut" in mesh.files else None
         self.everything = self._part(slice(None))
@@ -583,6 +606,26 @@ class Head3D:
             shaped[chin] = shaped[face] + jaw_weight[chin] * (swung - shaped[face])
         return shaped[part.back]
 
+    def _upper_lip_kept(self, landmark_moves: np.ndarray) -> np.ndarray:
+        """landmark_moves (portrait px) with the upper lip kept clear of the nose (see
+        UPPER_LIP_TRAVEL)."""
+        nose = landmark_moves[NOSE[1], 1]
+        moves = landmark_moves.copy()
+        moves[UPPER_LIP, 1] = np.clip(moves[UPPER_LIP, 1], nose - self.lip_travel, nose + self.lip_travel)
+        return moves
+
+    def _with_the_jaw(self, landmark_moves: np.ndarray) -> np.ndarray:
+        """landmark_moves (portrait px) with what is below the lips going where the jaw
+        takes it: the chin as the jaw swings, the lower lip no lower than that. Your chin
+        drops further than the jaw opens (OWN_GAPE_MAX, OWN_JAW_MAX); skin following it
+        past there would tear away from the jaw, or slide down off it at the corners."""
+        jaw = self._own_jaw(landmark_moves)
+        swing = (self.landmarks @ jaw[:3, :3].T + jaw[:3, 3] - self.landmarks) @ self.to_px.T
+        moves = landmark_moves.copy()
+        moves[self.rigid] = swing[self.rigid]
+        moves[LOWER_LIP, 1] = np.minimum(moves[LOWER_LIP, 1], swing[LOWER_LIP, 1])
+        return moves
+
     def _beyond(self, landmark_moves: np.ndarray, jaw: np.ndarray) -> np.ndarray:
         """What the landmarks do beyond swinging with the head's own jaw (portrait px)."""
         swing = (self.landmarks @ jaw[:3, :3].T + jaw[:3, 3] - self.landmarks) @ self.to_px.T
@@ -613,8 +656,9 @@ class Head3D:
         as your lower lip has dropped, and moved with the upper lip."""
         moved = landmark_moves[list(LIP_MIDDLE)] @ self.to_model.T
         drop = (moved[1] - moved[0]) @ self.mouth_axes[:, 1]  # the lower lip's, down is negative
-        hinge = np.array(JAW_HINGE) * self.mouth_width
-        angle = min(np.arcsin(np.clip(-drop / np.linalg.norm(hinge[1:]), 0, 1)), OWN_JAW_MAX)
+        hinge = np.array(JAW_HINGE) * self.face_model
+        gape = min(-drop, OWN_GAPE_MAX * self.mouth_width)
+        angle = min(np.arcsin(np.clip(gape / np.linalg.norm(hinge[1:]), 0, 1)), OWN_JAW_MAX)
         c, s = np.cos(angle), np.sin(angle)
         turn = self.mouth_axes @ np.array([[1, 0, 0], [0, c, -s], [0, s, c]]) @ self.mouth_axes.T
         pivot = self.mouth_origin + self.mouth_axes @ hinge
@@ -705,6 +749,8 @@ class Head3D:
         if sprite is not self._uploaded:
             self._upload(sprite)
         landmark_moves = self.flat._steady_eyes(offsets)
+        if self.jaw_weight is not None:
+            landmark_moves = self._with_the_jaw(self._upper_lip_kept(landmark_moves))
         self._shape_on_gpu(landmark_moves, ears)
         model_rot = FLIP @ rotation @ FLIP
         self.prog["rot"].write(model_rot.astype("f4").T.tobytes())
