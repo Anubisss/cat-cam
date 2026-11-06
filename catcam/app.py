@@ -12,6 +12,7 @@ Keys in the preview window: c = change cat, n = "this is my neutral face"
 """
 
 import argparse
+import gc
 import subprocess
 import sys
 import threading
@@ -720,6 +721,14 @@ def main(argv=None):
         raise
 
 
+def settle():
+    """Everything loaded so far stays for good, so the garbage collector stops looking
+    through it: with the 130K objects of the libraries and cats, each of its full
+    collections otherwise stops a frame for 10-25 ms."""
+    gc.collect()
+    gc.freeze()
+
+
 def run(argv=None):
     args = parse_args(argv)
     print("Loading cats...")
@@ -750,6 +759,7 @@ def run(argv=None):
         print(f"Listening to '{mic.heard}', sending your voice to '{mic.device}'. "
               "Select it as the microphone in Zoom.")
     print("Pick a cat in the window. Keep a relaxed face for a second at the start.")
+    settle()
     tracker = Tracker(webcam, trackers).start()
     try:
         with vcam:

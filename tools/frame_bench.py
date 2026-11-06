@@ -47,6 +47,7 @@ from catcam.voice import BLOCK, RATE, Voice
 FPS = 30  # how often the pretend webcam sends a frame
 PRELOAD = 120  # video frames kept in memory and looped (decoding is not what is measured)
 SAVE_EVERY = 45  # with --save, every this many frames is written
+SLOWEST = 3  # the slowest frames of each animal are listed with their stages
 # The scripted face: periods (s) of its head turn, nod and tilt and how far (rad)...
 TURN, NOD, TILT = (4.0, 0.35), (3.1, 0.15), (5.3, 0.1)
 TALK = (0.9, 0.12)  # ...how often the mouth opens and how far (face widths)...
@@ -273,6 +274,10 @@ def report(name: str, timings: Timings, intervals: list[float], missed: int, ski
         print(f"  {stage:<14}{percentiles([f.get(stage, 0.0) for f in frames])}")
     print(f"  {'interval':<14}{percentiles(intervals)}")
     print(f"  {'tracking':<14}{percentiles(tracking)}   (on its own thread)")
+    for frame in sorted(frames, key=lambda f: -f.get("work", 0))[:SLOWEST]:
+        biggest = sorted(frame.items(), key=lambda kv: -kv[1])
+        stages = ", ".join(f"{k} {v:.1f}" for k, v in biggest if v >= 0.5)
+        print(f"  slow frame: {stages}")
     if voice_late is not None:
         print(f"  voice blocks late: {len(voice_late)} (max {max(voice_late, default=0):.1f} ms)")
 
@@ -436,6 +441,7 @@ def main(argv=None):
     script = Script(cats[chosen[0]].points)
     picker = Picker([(c.name, c.sprite, c.background) for c in cats])
     webcam = Webcam(args.video, args.fps)
+    app.settle()
     if args.window:
         cv2.namedWindow(app.WINDOW, cv2.WINDOW_AUTOSIZE)
     results = {}
