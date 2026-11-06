@@ -49,6 +49,8 @@ USE
   Zoom (Settings > Audio > Microphone): the call hears your animal's sound
   for every syllable you say, never your voice. Woofgang barks, and every
   cat has its own voice: trills, mews, meows, grumbles or yowls.
+- "Voice" (or V) is on to begin with. Turn it off for the call to hear
+  your own voice through BlackHole, and on again for the animal's.
 - Sit still and quiet for a few seconds and your animal breathes and looks
   around on its own.
 - Press 1 to 8 in the Cat Cam window for an emoji reaction next to your

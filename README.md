@@ -134,8 +134,10 @@ comes out as your animal's sound, as loud and as high or low as you said it:
 Woofgang barks, Grinbert trills, Pleadwell mews softly and pleadingly,
 Meringue meows long and bored, Grumpkin grumbles, Wrinklestiltskin yowls
 with a rasp, Gingersnap goes "mrrp?" and Grumbledore grumbles deep and slow.
-When you sit still and quiet for a few seconds, your animal breathes, sways
-and looks around on its own, until you move or talk again.
+Turn off **Voice** (or press `v`) for the call to hear your own voice
+instead, and on again for the animal's. When you sit still and quiet for a
+few seconds, your animal breathes, sways and looks around on its own, until
+you move or talk again.
 
 Press `1` to `8` (in the Cat Cam window, while the picker is closed) for an
 emoji reaction beside your animal, which the call sees too: 1 🫵 points at
@@ -155,6 +157,7 @@ without it (not a Mac) the keys do nothing.
 | `t`        | tail on/off (same as the Tail switch)                     |
 | `d`        | 3D head on/off, for cats that have one                    |
 | `b`        | background on/off (on asks for a picture or video)        |
+| `v`        | voice on/off: the animal's sounds, or your own voice      |
 | `n`        | "this is my neutral face, looking at the viewer": recalibrate face and head pose |
 | `q`        | quit (closing the window or Ctrl+C also works)            |
 
@@ -185,7 +188,7 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
 | "Looking for your face..." | Face the camera and make sure your face is lit. |
 | The call hears your real voice | Choose **BlackHole 2ch** as the microphone in Zoom. If Cat Cam says no virtual microphone was found, install BlackHole (see above) and restart Cat Cam. |
 | "BlackHole is installed but macOS hasn't loaded it yet" | Run `sudo killall coreaudiod` (or restart the Mac), then restart Cat Cam. |
-| No barks or meows at all | Allow microphone access for your terminal under *System Settings → Privacy & Security → Microphone*. |
+| No barks or meows at all | Check the **Voice** switch is on (`v`), and allow microphone access for your terminal under *System Settings → Privacy & Security → Microphone*. |
 
 ## Add your own cat
 

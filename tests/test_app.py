@@ -198,8 +198,42 @@ def test_background_switch_toggles_by_click_or_key():
     assert not controls.background
 
 
+def test_voice_switch_toggles_by_click_or_key():
+    controls, state = _controls(), _State()
+    controls.handle(ord("1"), state)
+    assert controls.voice  # the animal's voice from the start
+    controls.mouse(4, *_centre("voice"), 0, None)
+    controls.handle(-1, state)
+    assert not controls.voice and not controls.background
+    controls.handle(ord("v"), state)
+    assert controls.voice
+    controls.handle(ord("c"), state)  # the switch stays as it is for the next cat
+    controls.handle(ord("2"), state)
+    assert controls.voice
+
+
+def test_switch_keys_are_all_different():
+    from catcam.app import KEY_HINTS, TOGGLES
+
+    keys = [key for _, _, key in TOGGLES] + [key for key, _ in KEY_HINTS]
+    assert len(keys) == len(set(keys))
+
+
+def test_preview_shows_the_voice_switch():
+    from types import SimpleNamespace
+
+    out = np.zeros((720, 1280, 3), np.uint8)
+    cat = SimpleNamespace(name="Test")
+    assert sum(w for _, _, w, _ in toggle_rects(True).values()) < SIZE[0] - 100  # all fit in the window
+    x, y, w, h = toggle_rects(False)["voice"]
+    area = np.s_[y + 8:y + h - 8, x + 10:x + w - 10]
+    off, on = preview(out, cat, False, voice=False)[area], preview(out, cat, False, voice=True)[area]
+    assert off.any()
+    assert np.abs(on.astype(int) - off).sum() > 0
+
+
 def test_no_head3d_switch_without_a_3d_head():
-    assert set(toggle_rects(False)) == {"tail", "background"}
+    assert set(toggle_rects(False)) == {"tail", "background", "voice"}
     controls, state = _controls(), _State()
     controls.handle(ord("1"), state)
     controls.has_head3d = False

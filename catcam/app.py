@@ -49,15 +49,18 @@ from catcam.picker import SIZE as PREVIEW_SIZE
 from catcam.picker import Picker
 from catcam.reactions import Reactions, reaction_for
 from catcam.tail import Tail, TailHand, TailSkin, tail_skin
-from catcam.voice import VirtualMic, Voice
+from catcam.voice import Sounds, VirtualMic, Voice
 
 OUT_W, OUT_H, FPS = 1280, 720, 30
 WINDOW = "Cat Cam"
 # Switches in a glass pill in the preview's top left corner: (name, label, key).
 # While "Tail" is on, a hand alone in view lifts a tail instead of being a paw
 # (two hands are two paws); "3D head" shows the cat's 3D head, if it has one;
-# "Background" asks for a picture or video to put behind the animal.
-TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"), ("background", "Background", "b"))
+# "Background" asks for a picture or video to put behind the animal; "Voice"
+# (on to begin with) turns your words into the animal's sounds, off lets the
+# call hear your own voice.
+TOGGLES = (("tail", "Tail", "t"), ("head3d", "3D head", "d"), ("background", "Background", "b"),
+           ("voice", "Voice", "v"))
 PILL = (16, 16, 44)  # the pill's x, y and height (preview px)
 CAPSULE = (44, 16)  # the bottom capsule's height and its gap to the window's edge
 # Keys shown in the bottom capsule (the switches show their own).
@@ -114,7 +117,7 @@ class Cat:
     head3d: Head3D | None  # the real 3D head, if this cat has one
     paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
     tail: TailSkin | None
-    sounds: list  # what your syllables become, see catcam.voice; empty = your own voice
+    sounds: Sounds  # what your syllables become, see catcam.voice; empty = your own voice
     sprite: np.ndarray
     background: np.ndarray
 
@@ -365,12 +368,14 @@ def _message(view: np.ndarray, lines: list[str], y: int):
 
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None,
-            tail: bool = False, head3d: bool | None = None, background: bool = False) -> np.ndarray:
+            tail: bool = False, head3d: bool | None = None, background: bool = False,
+            voice: bool = True) -> np.ndarray:
     """Mirrored like a mirror, with the switches and hints on glass, none of which
     reach the call. head3d: whether the 3D head is on; None leaves its switch out
     (the cat has none)."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
-    states = {"tail": tail} | ({} if head3d is None else {"head3d": head3d}) | {"background": background}
+    states = ({"tail": tail} | ({} if head3d is None else {"head3d": head3d})
+              | {"background": background, "voice": voice})
     _switches(view, states)
     _capsule(view, cat.name)
     if looking:
@@ -478,6 +483,7 @@ class Controls:
         self.tail = False  # the tail switch
         self.head3d = True  # the 3D head switch
         self.background = False  # the background switch
+        self.voice = True  # the voice switch: on = the animal's sounds, off = your own voice
         self.has_head3d = True  # whether the current cat has a 3D head (its switch shows)
         self.reaction = None  # a reaction asked for by its number key, see take_reaction
         self.quit = False
@@ -511,6 +517,8 @@ class Controls:
                 self.head3d = not self.head3d
             if key == ord("b") or hit == "background":
                 self.background = not self.background
+            if key == ord("v") or hit == "voice":
+                self.voice = not self.voice
             if key == ord("c"):
                 self.picking = True
                 self.picker.hover = None
@@ -559,7 +567,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
         hands = hand_tracker.detect_for_video(image, timestamp)
         cat = shown(cats[controls.current], controls.head3d)
         controls.has_head3d = cat.head3d is not None
-        voice.sounds = cat.sounds
+        voice.sounds = cat.sounds if controls.voice else Sounds()
         background = _follow_switch(controls, chooser, background)
         paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
         tail_hand = tail_hands.update(paws.slots) if controls.tail and cat.tail is not None else None
@@ -578,7 +586,7 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
             cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None,
                                        tail=controls.tail,
                                        head3d=controls.head3d if cat.head3d is not None else None,
-                                       background=controls.background))
+                                       background=controls.background, voice=controls.voice))
         key = cv2.waitKey(1) & 0xFF
         if effects.needs_permission(key, now):
             notice_until = now + 10
