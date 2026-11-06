@@ -28,7 +28,7 @@ import pyvirtualcam
 from mediapipe.tasks.python import BaseOptions, vision
 
 from catcam import cats as cat_assets
-from catcam import glass
+from catcam import glass, paw3d
 from catcam.background import Background, Chooser, behind
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
@@ -36,7 +36,7 @@ from catcam.ears import EarMotion
 from catcam.face_motion import ExpressionTransfer, RestingScores
 from catcam.fx import Effects, terminal_name
 from catcam.fx import load as load_effects
-from catcam.head3d import Head3D, has_head
+from catcam.head3d import Head3D, animal, has_head
 from catcam.head_pose import (
     OneEuroFilter,
     facing_camera,
@@ -119,7 +119,7 @@ class Cat:
     eyelids: CatFace
     mesh: CatMesh | Head3D
     head3d: Head3D | None  # the real 3D head, if this cat has one
-    paw: dict  # {(view, hand): PawSprite}, see catcam.paws.paw_set
+    paw: object  # 3D paws (catcam.paw3d), or else {(view, hand): PawSprite} (catcam.paws.paw_set)
     tail: TailSkin | None
     sounds: Sounds  # what your syllables become, see catcam.voice; empty = your own voice
     sprite: np.ndarray
@@ -147,7 +147,8 @@ def load_cats(renderer: Renderer) -> list[Cat]:
             mesh=mesh,
             head3d=Head3D(renderer, name, mesh, a.sprite, a.points, a.background, eyelids.lid_box())
             if has_head(name) else None,
-            paw=paw_set(a.paws, paw_style(a.sprite, a.points)),
+            paw=(paw3d.for_animal(renderer, animal(name), a.sprite, a.points)
+                 or paw_set(a.paws, paw_style(a.sprite, a.points))),
             tail=tail_skin(a.paws),
             sounds=a.sounds,
             sprite=a.sprite,

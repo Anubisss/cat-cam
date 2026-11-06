@@ -236,6 +236,16 @@ def has_head(name: str) -> bool:
     return all(f.exists() for f in files(name))
 
 
+def animal(name: str) -> str:
+    """What the cat is ("cat", "dog"): its 3D head says (head3d_import --animal); a cat
+    without one is a cat."""
+    mesh_file = files(name)[0]
+    if not mesh_file.exists():
+        return "cat"
+    with np.load(mesh_file) as mesh:
+        return str(mesh["animal"]) if "animal" in mesh.files else "cat"
+
+
 def perspective(fov: float, aspect: float, near: float, far: float) -> np.ndarray:
     f = 1 / np.tan(np.radians(fov) / 2)
     return np.array([[f / aspect, 0, 0, 0], [0, f, 0, 0],

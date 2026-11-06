@@ -289,7 +289,9 @@ def test_tail_replaces_one_paw_only_while_on(real_cats):
 
     cat = next(c for c in load_cats(Renderer((1280, 720))) if c.name == "Woofgang")
     paws = Paws(1280)
-    paws.slots = {"Right": {"presence": 1.0, "params": np.array([1100, 500, 200, 0, -1, -1, 0])}}
+    # An upright right hand showing its back (see catcam.paws.Paws.update for the layout).
+    params = np.array([1100, 500, 200, 0, -1, 0, -1, 0, 0, 1, 0, 0, 0, 0])
+    paws.slots = {"Right": {"presence": 1.0, "params": params}}
     tail = Tail((1280, 720))
     plain = cat.mesh.render(cat.sprite, np.zeros((478, 3)), np.eye(3))
     corner = np.s_[400:600, 1000:1200]  # where the paw is

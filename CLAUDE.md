@@ -45,7 +45,15 @@ in their vertex shader, and blinks repaint only the texels near the lids.
   Euro filter. `tools/tracking_eval.py` replays recorded webcam clips through
   the tracking and measures jitter, lag, blinks and dropouts: run it before and
   after changing any smoothing (keep the clips out of git, they are faces).
-- `catcam/paws.py`, `paw_photos.py`: paws. `tail.py`: the tail.
+- `catcam/paws.py`: paws following your hands (and the photo paws, used
+  when there is no 3D paw). `paw3d.py`: the 3D paws (`assets/paws/cat.npz`,
+  `dog.npz`), coloured from each animal's portrait; a cat whose 3D head says
+  `animal = dog` gets the dog's. `tools/paw_model.py` makes them from a
+  generated `.glb` (finds the pads, rigs the toes, thins the mesh):
+  `uv run --with trimesh --with fast-simplification python tools/paw_model.py <paws.glb> cat --pair`
+  (`--pair` for a model with a left and a right paw), and
+  `uv run python tools/paw_sheet.py -o paws.jpg` renders every animal's paws
+  in the hand poses worth checking. `paw_photos.py`: photo paws. `tail.py`: the tail.
 - `catcam/head3d.py`: real 3D heads, shown while the "3D head" switch is
   on, for cats with an `assets/cats/<Name>/head3d.npz`. It borrows the 2D cat's
   expressions, blinks and ears; `mouth3d.py` builds its teeth, tongue and

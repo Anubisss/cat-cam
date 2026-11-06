@@ -1,14 +1,14 @@
 """Cat paws that follow your hands.
 
-Each tracked hand becomes one of the cat's paws. Cats with paw photos (see
-catcam.paw_photos) show the top of the paw when you show the back of your
-hand and the sole when you show your palm, your left hand as the cat's left
-paw. Cats without photos get a drawn socked paw with pink toe beans,
-coloured like the cat: the arm takes the fur of its cheeks, the sock the fur
-of its chin. Bending a finger curls the toe on its side of the paw in, so a
-fist curls them all. A paw's position is
-taken relative to your face, so a hand next to your chin puts the paw next to
-the cat's chin.
+Each tracked hand becomes one of the cat's paws, your left hand as the cat's
+left paw. Animals with a 3D paw model get real 3D paws (catcam.paw3d) that turn
+with your hand in 3D. Otherwise cats with paw photos (see catcam.paw_photos)
+show the top of the paw when you show the back of your hand and the sole when
+you show your palm, and cats without photos get a drawn socked paw with pink
+toe beans, coloured like the cat: the arm takes the fur of its cheeks, the
+sock the fur of its chin. Bending a finger curls the toe on its side of the
+paw in, so a fist curls them all. A paw's position is taken relative to your
+face, so a hand next to your chin puts the paw next to the cat's chin.
 """
 
 from typing import NamedTuple
@@ -30,6 +30,9 @@ ARM_LENGTH = 14  # in paw widths
 DEFAULT_FACE_WIDTH = 0.25  # of the camera width, used until a face is seen
 PHOTO_ARM_LENGTH = 8  # paw photos' arms are extended to this many paw widths
 PALM_RANGE = (-0.25, 0.25)  # how squarely the palm faces the camera: back view up to [0], sole from [1]
+# How much of your hand's depth (its tilt toward or away from the camera, which the
+# hand tracker only guesses) a 3D paw copies: 0 keeps paws flat to the screen.
+HAND_DEPTH = 0.7
 # Fingertip-to-wrist distance over knuckle-to-wrist distance: about 2 for a
 # straight finger, under 1 for one bent into a fist.
 CLOSED_RANGE = (1.5, 1.0)  # straight at [0], fully bent at [1]
@@ -73,6 +76,16 @@ class PawSprite(NamedTuple):
     anchor: np.ndarray  # paw centre in the image
     width: int  # paw width in the image
     toes: float  # image row where the toes start (they reach up from here)
+
+
+class Placement(NamedTuple):
+    """Where and how a 3D paw goes this frame (see catcam.paw3d)."""
+    x: float  # the middle of the palm on screen, px
+    y: float
+    size: float  # paw width, px
+    axes: np.ndarray  # (3, 3) columns: toward the thumb, up the hand, out of its back (image axes, z away)
+    curls: np.ndarray  # (4,) index to little finger: 0 straight .. 1 bent
+    opacity: float
 
 
 def _fur_color(sprite: np.ndarray, points: np.ndarray, radius: float, brightness: float):
@@ -203,8 +216,33 @@ def palm_toward(handedness: str, pts: np.ndarray) -> float:
     hand shows its palm when it is positive, a left hand when it is negative."""
     up = pts[MIDDLE_MCP] - pts[WRIST]
     across = pts[INDEX_MCP] - pts[PINKY_MCP]
+    return _turn(up[:2], across[:2], 1.0 if handedness == "Right" else -1.0)
+
+
+def _turn(up: np.ndarray, across: np.ndarray, hand: float) -> float:
+    """palm_toward from a hand's up and across directions on screen; hand: +1 for a
+    right hand, -1 for a left one."""
     turn = (up[0] * across[1] - up[1] * across[0]) / (np.linalg.norm(up) * np.linalg.norm(across) + 1e-6)
-    return float(turn if handedness == "Right" else -turn)
+    return float(turn if hand >= 0 else -turn)
+
+
+def hand_axes(params: np.ndarray) -> np.ndarray:
+    """(3, 3) a tracked hand's frame (columns: toward the thumb, up the hand, out of its
+    back; image axes, z away from the camera) from Paws' params. A right hand's frame is
+    mirrored (its determinant is -1), so a paw modelled as a left one comes out right."""
+    up, across, hand = params[3:6], params[6:9], params[9]
+    up = up / (np.linalg.norm(up) + 1e-9)
+    across = across - (across @ up) * up
+    across /= np.linalg.norm(across) + 1e-9
+    back = np.cross(up, across) * (1.0 if hand >= 0 else -1.0)
+    return np.column_stack([across, up, back])
+
+
+def sprite_curls(params: np.ndarray) -> np.ndarray:
+    """A tracked hand's finger curls (Paws' params) ordered as the toes lie across a paw
+    sprite placed on it, from its left: the sprite's x axis is (-up_y, up_x) on screen."""
+    up, across, curls = params[3:5], params[6:8], np.asarray(params[10:14])
+    return curls[::-1] if across @ (-up[1], up[0]) > 0 else curls
 
 
 def finger_curls(pts: np.ndarray) -> np.ndarray:
@@ -239,16 +277,17 @@ class Paws:
             face_width = cam_w * DEFAULT_FACE_WIDTH
         detections = []
         for landmarks, handedness in zip(hands.hand_landmarks, hands.handedness):
-            pts = np.array([(p.x * cam_w, p.y * cam_h) for p in landmarks])
+            # z (depth, the tracker's guess) uses the x scale, as MediaPipe defines it.
+            pts = np.array([(p.x * cam_w, p.y * cam_h, getattr(p, "z", 0.0) * cam_w * HAND_DEPTH)
+                            for p in landmarks])
             up = pts[MIDDLE_MCP] - pts[WRIST]
             up /= np.linalg.norm(up) + 1e-6
-            palm = 0.6 * pts[[INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]].mean(axis=0) + 0.4 * pts[WRIST]
-            palm_width = np.linalg.norm(pts[INDEX_MCP] - pts[PINKY_MCP])
+            across = pts[INDEX_MCP] - pts[PINKY_MCP]
+            across /= np.linalg.norm(across) + 1e-6
+            knuckles = pts[[INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP], :2].mean(axis=0)
+            palm = 0.6 * knuckles + 0.4 * pts[WRIST, :2]
+            palm_width = np.linalg.norm(pts[INDEX_MCP, :2] - pts[PINKY_MCP, :2])
             label = handedness[0].category_name
-            # Each finger bends the toe on its side: ordered as the toes lie
-            # across the paw sprite (its x axis is (-up_y, up_x) on screen).
-            across = [(pts[mcp] - palm) @ (-up[1], up[0]) for _, mcp in FINGERS]
-            curls = finger_curls(pts)[np.argsort(across)]
             # Placed by where the hand is relative to your face in the camera
             # frame (so hands stay on screen even though the cat fills it);
             # sized relative to your face, like a real paw next to the cat's.
@@ -256,8 +295,9 @@ class Paws:
                 *(cat_face_center + (palm - face_center) * (self.out_w / cam_w)),
                 palm_width * (cat_face_width / face_width) * PAW_SIZE,
                 *up,
-                palm_toward(label, pts),  # from the detected handedness, before any relabelling
-                *curls,
+                *across,
+                1.0 if label == "Right" else -1.0,  # the detected handedness, before any relabelling
+                *finger_curls(pts[:, :2]),  # index to little finger
             ])
             detections.append((label, target))
         seen = set()
@@ -308,22 +348,26 @@ class Paws:
         return labelled
 
     def draw(self, frame: np.ndarray, paws, hidden=()) -> np.ndarray:
-        """paws: a PawSprite for every hand, or {(view, hand): PawSprite} (see
-        paw_set); hidden: hands ("Left", "Right") that get no paw."""
+        """paws: a PawSprite for every hand, {(view, hand): PawSprite} (see paw_set),
+        or 3D paws (catcam.paw3d.Paw3D); hidden: hands ("Left", "Right") that get no paw."""
+        shown = [(name, slot["params"], slot["presence"]) for name, slot in self.slots.items()
+                 if slot["presence"] >= 0.02 and "params" in slot and name not in hidden]
+        if not isinstance(paws, (PawSprite, dict)):
+            return paws.render(frame, [
+                Placement(p[0], p[1], p[2], hand_axes(p), np.clip(p[10:14], 0, 1), presence)
+                for _, p, presence in shown])
         out = frame.copy()
-        for name, slot in self.slots.items():
-            if slot["presence"] < 0.02 or "params" not in slot or name in hidden:
-                continue
-            x, y, size, ux, uy, toward, *curls = slot["params"]
+        for name, params, presence in shown:
+            x, y, size, ux, uy = params[:5]
             norm = np.hypot(ux, uy) + 1e-6
-            placement = (x, y, size, ux / norm, uy / norm, np.clip(curls, 0, 1))
+            placement = (x, y, size, ux / norm, uy / norm, np.clip(sprite_curls(params), 0, 1))
             if isinstance(paws, PawSprite):
                 layers = [(paws, 1.0)]
             else:
-                palm = palm_facing(toward)
+                palm = palm_facing(_turn(params[3:5], params[6:8], params[9]))
                 hand = name.lower()
                 layers = [(paws["front", hand], 1 - palm), (paws["back", hand], palm)]
-            _blend(out, [(paw, w * slot["presence"]) for paw, w in layers if w > 0.01], placement)
+            _blend(out, [(paw, w * presence) for paw, w in layers if w > 0.01], placement)
         return out
 
 

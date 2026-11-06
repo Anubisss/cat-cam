@@ -6,11 +6,12 @@ Wrinklestiltskin or Woofgang. Each is a real 3D head that turns, nods and tilts
 with your head, copies your whole face (brows, blinks, cheeks, smile) and opens
 its own mouth with yours, its jaw swinging down to show teeth and tongue, while
 the side of its head that turns away from the light falls into shadow. Your
-hands become its paws, toe by toe: the top of the paw when you show the back of
-your hand, the toe beans when you show your palm. When you talk, the call
-hears your animal instead of your voice: Woofgang barks, and every cat has a
-voice of its own, from Grinbert's chirpy trills to Grumbledore's slow old
-grumbles, all real animals. When you sit still, your animal
+hands become its paws, real 3D ones in its own colours (a dog's for Woofgang),
+that turn with your hands and curl toe by toe with your fingers: the toe beans
+when you show your palm, the fur when you show the back of your hand. When you
+talk, the call hears your animal instead of your voice: Woofgang barks, and
+every cat has a voice of its own, from Grinbert's chirpy trills to
+Grumbledore's slow old grumbles, all real animals. When you sit still, your animal
 breathes and looks around on its own. And you can put any picture or video
 behind it.
 
@@ -113,8 +114,9 @@ rather it faced the viewer while you look elsewhere (at the screen, say),
 press `n` while doing that.
 
 Raise your hands into the camera's view for paws. Turn a hand around to
-show the other side of the paw. Each toe follows one of your fingers: curl a
-finger and its toe curls in, make a fist and they all do.
+show the other side of the paw; tilt or turn it and the paw does too. Each toe
+follows one of your fingers: curl a finger and its toe curls in, make a fist
+and they all do.
 Turn on **Tail** in the top left corner of the window (or press `t`) for the
 cat's tail: while only one of your hands is in view, it lifts the tip of
 the tail instead of being a paw, and the rest of the tail rises from below,
@@ -210,7 +212,8 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
    `all_cats/<Name>PawsBack.png` (the soles). In each, put the left paw on
    the left and the right paw on the right, separated by a vertical purple
    line. `prepare` cuts them out too; a cat without paw photos gets drawn
-   paws in its colours.
+   paws in its colours. These photo paws only show if the 3D paws
+   (`assets/paws/`) are missing; the tail always takes its skin from them.
    If the mouth ends up in the wrong place (it can on faces that aren't
    cat-like, such as a dog's), write where the lips meet in
    `all_cats/<Name>Mouth.txt` and prepare it again with `--force`; see
@@ -239,6 +242,9 @@ These constants sit at the top of their files:
 | `FLATTEN`, `PERK`, `TWITCH_EVERY` | `catcam/ears.py` | how far the ears move, and how often they twitch |
 | `STRENGTH`, `LIGHT` | `catcam/lighting.py` | how much turning the head changes its shading, and where the light comes from |
 | `PAW_SIZE` | `catcam/paws.py` | paw size relative to your hand |
+| `HAND_DEPTH` | `catcam/paws.py` | how much of your hand's tilt toward or away from the camera the 3D paws copy |
+| `CURL_ANGLE`, `RAISE` | `catcam/paw3d.py` | how far a toe curls with its finger, and how much taller a finger raised out of a fist stands |
+| `SOCK_SHARE`, `TABBY`, `AMBIENT` | `catcam/paw3d.py` | how much lighter a paw is than the arm, how finely patterned fur must be for stripes, and how flat the paws' light is |
 | `LENGTH`, `SWISH`, `DRAG`, `SWITCH_FRAMES` | `catcam/tail.py` | how long the tail is, how much it sways by itself, how quickly it calms down, and how long a change between one and two hands must last before the tail follows |
 | `TOP_MARGIN`, `CHIN_LINE` | `catcam/cat_mesh.py` | how much of the screen the cat fills |
 | `JAW_HINGE`, `OWN_JAW_MAX` | `catcam/head3d.py` | where a 3D head's own jaw swings from, and how far it opens |
@@ -262,8 +268,13 @@ These constants sit at the top of their files:
    coloured to match the cat's lips (`catcam/cat_mesh.py`).
 5. Blinks lower the cat's eyelids in its texture (`catcam/cat_face.py`), the
    ears bend about a hinge below their tips (`catcam/ears.py`), and paws are
-   drawn where your hands are (`catcam/paws.py`), showing their top or their
-   sole depending on which way your hand faces. A tail (`catcam/tail.py`) is
+   drawn where your hands are (`catcam/paws.py`). They are 3D models
+   (`catcam/paw3d.py`, a cat's and a dog's, made from Meshy models by
+   `tools/paw_model.py`, which finds their pads and rigs their toes) turned
+   like your hand, each toe bent about its knuckle as far as its finger is
+   curled. They have no texture of their own: each animal colours them from
+   its portrait, the fur from its cheeks and chin (striped for a tabby), the
+   pads from its nose. A tail (`catcam/tail.py`) is
    a chain of points whose tip is pulled toward your hand; the rest is
    simulated with momentum, even bending and a bend limit, and wrapped in the
    skin of the cat's paw photo.
@@ -318,7 +329,8 @@ catcam/
   voice.py         your voice as barks or meows, out to the virtual microphone
   background.py    a picture or video behind the animal
   reactions.py     emoji reactions on the number keys
-  paws.py          paws
+  paws.py          paws: following your hands, and the photo paws
+  paw3d.py         3D paws, coloured like each animal (models made by tools/paw_model.py)
   tail.py          the tail: a chain of points simulated like a real tail
   paw_photos.py    turns paw photos into paw sprites (used by prepare)
   prepare.py       turns all_cats/*.png into assets/cats/*
@@ -330,8 +342,10 @@ catcam/
 all_cats/          source portraits
 assets/cats/       prepared cats (cutout + face points, 3D heads), used at runtime
 assets/mouth/      3D teeth, gums, palate and tongue, a cat's and a dog's
+assets/paws/       3D paws, a cat's and a dog's
 docs/3d-heads.md   how to make a 3D head
-tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet, the mouth model;
+tools/             3D helpers: TRELLIS.2 install and fixes, render sheets of heads and paws, the
+                   mouth and paw models;
                    tracking_eval.py measures face tracking on recorded webcam clips;
                    frame_bench.py measures frame times, every animal, no one at the camera;
                    cat_voices.py makes the animals' voices from CC0 recordings

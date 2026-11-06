@@ -15,6 +15,7 @@ from catcam.paws import (
     paw_sprite,
     paw_style,
     photo_paw,
+    sprite_curls,
 )
 
 
@@ -86,10 +87,16 @@ def test_two_hands_with_the_same_label_get_their_own_paws():
     assert (columns < 640).any() and (columns > 640).any()
 
 
+def _params(x, y, size, curls=(0, 0, 0, 0)):
+    """Paws' params for an upright right hand showing its back, index finger on the image
+    left: position, size, up, across (toward the thumb), handedness, curls (index first)."""
+    return np.array([x, y, size, 0, -1, 0, -1, 0, 0, 1, *curls], float)
+
+
 def test_hidden_hands_get_no_paw():
     paw = paw_sprite(paw_style(*_cat()), width=100)
     paws = Paws(out_width=1280)
-    paws.slots = {"Right": {"presence": 1.0, "params": np.array([640, 300, 120, 0, -1, -1, 0])}}
+    paws.slots = {"Right": {"presence": 1.0, "params": _params(640, 300, 120)}}
     frame = np.zeros((720, 1280, 3), np.uint8)
     assert paws.draw(frame, paw).any()
     assert not paws.draw(frame, paw, hidden=("Right",)).any()
@@ -192,7 +199,7 @@ def _toe_tops(curls):
     """Top row of the paw drawn upright, per column, with the toes curled by curls (from the left)."""
     paw = photo_paw(_photo_paw((0, 0, 255)))
     paws = Paws(out_width=400)
-    paws.slots = {"Right": {"presence": 1.0, "params": np.array([200, 150, 120, 0, -1, -1, *curls])}}
+    paws.slots = {"Right": {"presence": 1.0, "params": _params(200, 150, 120, curls)}}
     drawn = paws.draw(np.zeros((400, 400, 3), np.uint8), paw).any(axis=2)
     assert drawn[-1].any()  # the arm is unchanged
     return np.where(drawn.any(axis=0), drawn.argmax(axis=0), 400)
@@ -231,7 +238,7 @@ def test_fingers_bend_the_toes_on_their_side_of_the_paw():
         hands = SimpleNamespace(hand_landmarks=[hand], handedness=[[SimpleNamespace(category_name="Right")]])
         paws = Paws(out_width=1280)
         paws.update(hands, None, (1280, 720), 1 / 30, np.array([640.0, 300.0]), 300.0)
-        curls = paws.slots["Right"]["params"][6:]
+        curls = sprite_curls(paws.slots["Right"]["params"])
         np.testing.assert_allclose(curls, [0, 0, 0, 1] if flip else [1, 0, 0, 0], atol=1e-9)
 
 
