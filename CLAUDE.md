@@ -13,11 +13,17 @@ uv run cat-cam --check         # load and draw every cat once, no camera needed
 uv run pytest                  # all tests; they render every real cat with OpenGL
 uv run pytest -m "not gl"      # only the tests that need no OpenGL context
 uv run ruff check .            # lint (line length 110)
+uv run python tools/frame_bench.py   # frame times of every 3D head, no camera needed
 ```
 
 Run the tests and ruff before every commit. A change to how something looks
 (mesh, mouth, paws, tail, ...) also needs a look: render the affected cats to
-an image and check them, as the tests only catch holes and gross errors.
+an image and check them, as the tests only catch holes and gross errors. A
+change to what runs every frame needs `tools/frame_bench.py` before and after
+(`--video clip.mp4` tracks a recording, `--record clip.mp4` makes one): the
+main loop has about 33 ms a frame, and spikes show as choppy video. Keep work
+off it: tracking runs on its own thread (`Tracker`), the 3D heads are shaped
+in their vertex shader, and blinks repaint only the texels near the lids.
 
 ## Layout
 

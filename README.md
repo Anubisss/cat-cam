@@ -328,6 +328,7 @@ assets/mouth/      3D teeth, gums, palate and tongue, a cat's and a dog's
 docs/3d-heads.md   how to make a 3D head
 tools/             3D head helpers: TRELLIS.2 install and fixes, a render sheet, the mouth model;
                    tracking_eval.py measures face tracking on recorded webcam clips;
+                   frame_bench.py measures frame times, every animal, no one at the camera;
                    cat_voices.py makes the cats' voices from CC0 recordings
 models/            MediaPipe face and hand models
 packaging/         the standalone macOS app: PyInstaller spec, icon, build script
