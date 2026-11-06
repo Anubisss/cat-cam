@@ -33,7 +33,9 @@ in their vertex shader, and blinks repaint only the texels near the lids.
 - `catcam/voice.py`: your microphone as the animal's sounds (whole barks or
   meows started by your syllables, from `assets/cats/<Name>/voice/`, cut out
   of real CC0 recordings by `tools/cat_voices.py`), out to the BlackHole
-  virtual microphone. `idle.py`: what the
+  virtual microphone; `blackhole.py` is the preview's "Get the voice" button,
+  which fetches, checks and opens BlackHole's installer when it is missing
+  (its version bump is noted at its top). `idle.py`: what the
   animal does by itself while you are still. `background.py`: a picture or
   video behind the animal. `reactions.py`: emoji reactions on the number
   keys, drawn from the Mac's emoji font at runtime (never commit Apple's

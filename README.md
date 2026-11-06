@@ -71,17 +71,24 @@ The rest of this page is for running it from the code instead.
       effect after a restart.
 
 4. **Optional: its voice.** For the call to hear barks and meows instead of
-   your voice, install the free **BlackHole 2ch** virtual microphone. No
+   your voice, Cat Cam needs the free **BlackHole 2ch** virtual microphone,
+   made by [Existential Audio](https://existential.audio/blackhole/). No
    Terminal needed:
-   1. Go to [existential.audio/blackhole](https://existential.audio/blackhole/),
-      choose **BlackHole 2ch** and enter your email address; the download link
-      arrives by email. (Or, if you use Homebrew: `brew install blackhole-2ch`.)
-   2. Double-click the downloaded `BlackHole2ch-….pkg` and click through the
-      installer. It asks for your Mac's password, as it installs an audio
-      driver.
+   1. Start Cat Cam (see below). Without BlackHole, its window shows a
+      **Get the voice** button under the Voice switch. Click it: Cat Cam
+      downloads BlackHole's installer from its makers' site, checks it is
+      really theirs, and opens it in Apple's installer.
+   2. Click through the installer. It asks for your Mac's password, as it
+      installs an audio driver.
    3. **Restart the Mac**, so it loads the new microphone.
    4. In Zoom, choose **BlackHole 2ch** as the microphone (*Settings → Audio →
       Microphone*).
+
+   Or get it from the website instead: go to
+   [existential.audio/blackhole](https://existential.audio/blackhole/), choose
+   **BlackHole 2ch** and enter your email address (the download link arrives
+   by email), then do steps 2 to 4 with the downloaded `BlackHole2ch-….pkg`.
+   With Homebrew: `brew install blackhole-2ch`.
 
    Cat Cam listens to your real microphone and sends the animal's sounds to
    BlackHole. Without BlackHole everything else works, and the call hears
@@ -193,8 +200,8 @@ uv run cat-cam --background beach.jpg # start with this picture or video behind 
 | Zoom does not list "OBS Virtual Camera" | Restart Zoom while Cat Cam is running. |
 | The cat looks off while you are relaxed | Press `n` with a neutral face. |
 | "Looking for your face..." | Face the camera and make sure your face is lit. |
-| The call hears your real voice | Choose **BlackHole 2ch** as the microphone in Zoom. If Cat Cam says no virtual microphone was found, install BlackHole (see above) and restart Cat Cam. |
-| "BlackHole is installed but macOS hasn't loaded it yet" | Run `sudo killall coreaudiod` (or restart the Mac), then restart Cat Cam. |
+| The call hears your real voice | Choose **BlackHole 2ch** as the microphone in Zoom. If Cat Cam shows a **Get the voice** button, BlackHole isn't installed yet: click it (see above). |
+| "Restart your Mac to finish setting up the voice" | BlackHole is installed, but macOS hasn't loaded it yet: restart the Mac (or run `sudo killall coreaudiod`), then restart Cat Cam. |
 | No barks or meows at all | Check the **Voice** switch is on (`v`), and allow microphone access for your terminal under *System Settings → Privacy & Security → Microphone*. |
 
 ## Add your own cat
@@ -330,6 +337,7 @@ catcam/
   head_pose.py     head rotation and the One Euro smoothing filter
   idle.py          what the animal does by itself while you are still
   voice.py         your voice as barks or meows, out to the virtual microphone
+  blackhole.py     the "Get the voice" button: fetches, checks and opens BlackHole's installer
   background.py    a picture or video behind the animal
   reactions.py     emoji reactions on the number keys
   paws.py          paws: following your hands, and the photo paws

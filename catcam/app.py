@@ -30,6 +30,7 @@ from mediapipe.tasks.python import BaseOptions, vision
 from catcam import cats as cat_assets
 from catcam import glass, paw3d
 from catcam.background import Background, Chooser, behind
+from catcam.blackhole import GAP_BELOW, VoiceSetup
 from catcam.cat_face import EYES, CatFace
 from catcam.cat_mesh import CatMesh, Renderer
 from catcam.ears import EarMotion
@@ -376,14 +377,18 @@ def _message(view: np.ndarray, lines: list[str], y: int):
 
 def preview(out: np.ndarray, cat: Cat, looking: bool, notice: list[str] | None = None,
             tail: bool = False, head3d: bool | None = None, background: bool = False,
-            voice: bool = True) -> np.ndarray:
+            voice: bool = True, voice_setup: VoiceSetup | None = None) -> np.ndarray:
     """Mirrored like a mirror, with the switches and hints on glass, none of which
     reach the call. head3d: whether the 3D head is on; None leaves its switch out
-    (the cat has none)."""
+    (the cat has none). voice_setup: the "Get the voice" button, under the Voice
+    switch, for a Mac without BlackHole."""
     view = cv2.flip(cv2.resize(out, PREVIEW_SIZE, interpolation=cv2.INTER_AREA), 1)
     states = ({"tail": tail} | ({} if head3d is None else {"head3d": head3d})
               | {"background": background, "voice": voice})
     _switches(view, states)
+    if voice_setup is not None:
+        x, y, w, h = toggle_rects(head3d is not None)["voice"]
+        voice_setup.draw(view, x + w + 6, y + h + GAP_BELOW)
     _capsule(view, cat.name)
     if looking:
         _message(view, ["Looking for your face"], PILL[1])
@@ -484,8 +489,9 @@ def parse_args(argv=None):
 class Controls:
     """Which cat is streamed and whether the picker is open, driven by keys and clicks."""
 
-    def __init__(self, picker: Picker, mouse: Mouse):
+    def __init__(self, picker: Picker, mouse: Mouse, voice_setup: VoiceSetup | None = None):
         self.picker, self.mouse = picker, mouse
+        self.voice_setup = voice_setup  # the "Get the voice" button, if BlackHole isn't set up
         self.current, self.picking, self.picked_once = 0, True, False
         self.tail = False  # the tail switch
         self.head3d = True  # the 3D head switch
@@ -518,6 +524,8 @@ class Controls:
         else:
             click = self.mouse.take_position()
             hit = toggle_at(*click, self.has_head3d) if click is not None else None
+            if click is not None and self.voice_setup is not None:
+                self.voice_setup.click(*click)
             if key == ord("t") or hit == "tail":
                 self.tail = not self.tail
             if key == ord("d") or hit == "head3d":
@@ -651,7 +659,8 @@ def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, 
             cv2.imshow(WINDOW, preview(out, cat, looking, notice if now < notice_until else None,
                                        tail=controls.tail,
                                        head3d=controls.head3d if cat.head3d is not None else None,
-                                       background=controls.background, voice=controls.voice))
+                                       background=controls.background, voice=controls.voice,
+                                       voice_setup=controls.voice_setup))
         key = cv2.waitKey(1) & 0xFF
         if effects.needs_permission(key, now):
             notice_until = now + 10
@@ -759,12 +768,13 @@ def run(argv=None):
     if mic.start():
         print(f"Listening to '{mic.heard}', sending your voice to '{mic.device}'. "
               "Select it as the microphone in Zoom.")
+    voice_setup = VoiceSetup.for_this_mac()
     print("Pick a cat in the window. Keep a relaxed face for a second at the start.")
     settle()
     tracker = Tracker(webcam, trackers).start()
     try:
         with vcam:
-            stream(cats, Controls(picker, mouse), effects, voice, tracker, vcam, background)
+            stream(cats, Controls(picker, mouse, voice_setup), effects, voice, tracker, vcam, background)
     except KeyboardInterrupt:
         pass
     finally:

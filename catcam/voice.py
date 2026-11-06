@@ -290,8 +290,8 @@ def pick_mic(devices, default: int) -> int | None:
 
 SETUP_HINT = (
     "No virtual microphone found, so the call hears your real microphone.\n"
-    "  One-time setup: brew install blackhole-2ch   (then restart Cat Cam)\n"
-    "  and pick 'BlackHole 2ch' as the microphone in Zoom."
+    "  One-time setup: click 'Get the voice' in Cat Cam's window (or brew install blackhole-2ch),\n"
+    "  restart the Mac and pick 'BlackHole 2ch' as the microphone in Zoom."
 )
 DRIVER = Path("/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver")
 RELOAD_HINT = (
