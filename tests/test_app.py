@@ -1,4 +1,3 @@
-import time
 
 import cv2
 import numpy as np
@@ -342,7 +341,7 @@ def test_tracker_hands_on_the_newest_frame_then_the_webcam_failing(monkeypatch):
     monkeypatch.setattr(app, "FIRST_FRAME_TIMEOUT", 0.2)
     monkeypatch.setattr(app, "WEBCAM_TIMEOUT", 0.2)
     tracker = Tracker(_Webcam(5), (_Landmarker(), _Landmarker())).start()
-    time.sleep(0.1)  # all five are tracked by now; drawing fell behind
+    tracker._thread.join(timeout=5)  # all five tracked, the webcam gave out; drawing fell behind
     tracked = tracker.next()
     assert (tracked.face, tracked.hands, tracked.size) == (4, 4, (6, 4))
     with pytest.raises(SystemExit):  # raised on the main thread, as the webcam stopped
