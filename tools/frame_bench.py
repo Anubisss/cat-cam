@@ -30,17 +30,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
-import mediapipe as mp
 import numpy as np
 
 from catcam import app
-from catcam.app import OUT_H, OUT_W, FaceState, load_cats, preview, render, shown
+from catcam.app import OUT_H, OUT_W, FaceState, load_cats, shown
 from catcam.cat_face import CatFace
 from catcam.cat_mesh import CatMesh, Renderer
+from catcam.fx import Effects
 from catcam.head3d import Head3D
 from catcam.head_pose import to_matrix
 from catcam.paws import Paws
-from catcam.tail import Tail, TailHand
+from catcam.picker import Picker
+from catcam.tail import Tail
 from catcam.voice import BLOCK, RATE, Voice
 
 FPS = 30  # how often the pretend webcam sends a frame
@@ -88,7 +89,12 @@ class Webcam:
                 sys.exit(f"Cannot read {video}.")
         else:
             self.frames = [np.full((OUT_H, OUT_W, 3), 60, np.uint8)]
-        self.fps, self.start, self.taken, self.missed = fps, time.monotonic(), -1, 0
+        self.fps, self.missed = fps, 0
+        self.restart()
+
+    def restart(self):
+        """Starts sending afresh, as when the webcam is opened."""
+        self.start, self.taken = time.monotonic(), -1
 
     def read(self):
         if self.fps <= 0:  # as fast as the reader can take them
@@ -198,7 +204,7 @@ class Timings:
 
 
 def watch(timings: Timings, owner, name: str, stage: str):
-    """Times every call of owner.name (a class's method) as stage."""
+    """Times every call of owner.name (a method or a module's function) as stage."""
     original = getattr(owner, name)
 
     def timed(*args, **kwargs):
@@ -256,23 +262,70 @@ def percentiles(values) -> str:
     return f"{p50:6.1f} {p95:6.1f} {p99:6.1f} {v.max():6.1f}"
 
 
-def report(name: str, timings: Timings, intervals: list[float], missed: int, voice_late=None):
+def report(name: str, timings: Timings, intervals: list[float], missed: int, skipped: int,
+           tracking: list[float], voice_late=None):
     frames = timings.frames
     stages = sorted({k for f in frames for k in f}, key=lambda k: (k != "work", k))
-    print(f"\n{name}: {len(frames)} frames, {missed} webcam frames missed, "
-          f"{len(timings.gc_pauses)} GC pauses (max {max(timings.gc_pauses, default=0):.1f} ms)")
+    print(f"\n{name}: {len(frames)} frames, {missed} webcam frames missed, {skipped} tracked but "
+          f"skipped, {len(timings.gc_pauses)} GC pauses (max {max(timings.gc_pauses, default=0):.1f} ms)")
     print(f"  {'ms':<14}{'p50':>6} {'p95':>6} {'p99':>6} {'max':>6}")
     for stage in stages:
         print(f"  {stage:<14}{percentiles([f.get(stage, 0.0) for f in frames])}")
     print(f"  {'interval':<14}{percentiles(intervals)}")
+    print(f"  {'tracking':<14}{percentiles(tracking)}   (on its own thread)")
     if voice_late is not None:
         print(f"  voice blocks late: {len(voice_late)} (max {max(voice_late, default=0):.1f} ms)")
 
 
-def run_cat(cat, script: Script, webcam: Webcam, trackers, frames: int, save: Path | None,
-            voice: bool) -> dict:
-    """The app's per-frame loop (catcam.app.stream) for one animal, timed."""
-    face_tracker, hand_tracker = trackers
+class ScriptedTracker(app.Tracker):
+    """The app's Tracker: it still tracks the webcam's frames, for the cost, but hands
+    on the script's face and hand, so that every run moves the same. Also times the
+    main loop: a frame's work runs from getting its tracking to asking for the next."""
+
+    def __init__(self, webcam, script: Script, timings: Timings):
+        super().__init__(webcam, app.create_trackers())  # fresh ones: their clocks restart
+        self.script, self.timings = script, timings
+        self.tracking: list[float] = []
+        self.handed = 0
+        self.began = None
+
+    def track(self, frame, timestamp):
+        start = time.perf_counter()
+        super().track(frame, timestamp)
+        self.tracking.append((time.perf_counter() - start) * 1000)
+        t = timestamp / 1000
+        return self.script.face_result(t), self.script.hand_result(t)
+
+    def next(self):
+        if self.began is not None:
+            self.timings.add("work", (time.perf_counter() - self.began) * 1000)
+            self.timings.next_frame()
+        tracked = super().next()
+        self.began, self.handed = time.perf_counter(), self.handed + 1
+        return tracked
+
+
+class Output:
+    """Stands in for the virtual camera: notes when each frame goes out, and asks
+    the loop to stop after so many."""
+
+    def __init__(self, controls: app.Controls, frames: int, save: Path | None):
+        self.controls, self.frames, self.save = controls, frames, save
+        self.sent: list[float] = []
+        self.kept: list[np.ndarray] = []
+
+    def send(self, frame: np.ndarray):
+        self.sent.append(time.perf_counter())
+        if self.save is not None and len(self.sent) % SAVE_EVERY == 1:
+            self.kept.append(frame.copy())
+        if len(self.sent) >= self.frames:
+            self.controls.quit = True
+
+
+def run_cat(cats: list, index: int, flat: bool, script: Script, webcam: Webcam, picker: Picker, frames: int,
+            save: Path | None, voice: bool, window: bool) -> dict:
+    """The app's loop (catcam.app.stream) for one animal, timed."""
+    cat = shown(cats[index], not flat)
     timings = Timings()
     undo = [watch(timings, CatFace, "render", "eyelids"),
             watch(timings, Head3D, "_upload", "texture"),
@@ -280,65 +333,64 @@ def run_cat(cat, script: Script, webcam: Webcam, trackers, frames: int, save: Pa
             watch(timings, CatMesh, "_shape", "shape"),
             watch(timings, Renderer, "read", "readback"),
             watch(timings, Paws, "draw", "paws_draw"),
-            watch(timings, Tail, "draw", "tail_draw")]
-    state, paws, tail, tail_hands = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), TailHand()
-    state.idle.rng, state.ear_motion.rng = np.random.default_rng(2), np.random.default_rng(3)
-    intervals, last_out, outputs = [], None, []
+            watch(timings, Tail, "draw", "tail_draw"),
+            watch(timings, FaceState, "update", "state"),
+            watch(timings, Paws, "update", "state"),
+            watch(timings, Tail, "update", "state"),
+            watch(timings, app, "render", "render"),
+            watch(timings, app, "preview", "preview"),
+            watch(timings, cv2, "imshow", "show")]
+    if not window:
+        undo += [stub(app, "window_closed", lambda: False), stub(cv2, "imshow", lambda *a: None),
+                 stub(cv2, "waitKey", lambda *a: -1)]
+    controls = app.Controls(picker, app.Mouse(picker))
+    controls.current, controls.picking, controls.picked_once = index, False, True
+    controls.head3d, controls.tail = not flat, True
+    output = Output(controls, frames, save)
+    tracker = ScriptedTracker(webcam, script, timings)
+    webcam.restart()
     missed_before = webcam.missed
     voice_load = VoiceLoad(cat.sounds) if voice else None
-    start = last = time.monotonic()
+    real_state = FaceState.__init__
+
+    def seeded(state):  # the same twitches and glances every run
+        real_state(state)
+        state.idle.rng, state.ear_motion.rng = np.random.default_rng(2), np.random.default_rng(3)
+
+    undo.append(stub(FaceState, "__init__", seeded))
     if voice_load:
         voice_load.__enter__()
     try:
-        for i, (frame, now) in enumerate(app.frames(webcam)):
-            if i >= frames:
-                break
-            began = time.perf_counter()
-            dt, last = max(now - last, 1e-3), now
-            cam_size = (frame.shape[1], frame.shape[0])
-            t = time.perf_counter()
-            image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            timestamp = int((now - webcam.start) * 1000)  # the trackers' clock runs on across animals
-            face_tracker.detect_for_video(image, timestamp)
-            hand_tracker.detect_for_video(image, timestamp)
-            timings.add("track", (time.perf_counter() - t) * 1000)
-            t = time.perf_counter()
-            state.update(script.face_result(now - start), cam_size, dt, now)
-            hands = script.hand_result(now - start)
-            paws.update(hands, state.face, cam_size, dt, *cat.mesh.face_on_screen())
-            tail_hand = tail_hands.update(paws.slots) if cat.tail is not None else None
-            hand = paws.slots.get(tail_hand, {}) if tail_hand else {}
-            tail.update(hand.get("params"), hand.get("presence", 0.0), dt, *cat.mesh.face_on_screen())
-            timings.add("state", (time.perf_counter() - t) * 1000)
-            t = time.perf_counter()
-            out = render(cat, state, paws, tail, tail_hand)
-            timings.add("render", (time.perf_counter() - t) * 1000)
-            t = time.perf_counter()
-            preview(out, cat, looking=False, tail=True, head3d=cat.head3d is not None)
-            timings.add("preview", (time.perf_counter() - t) * 1000)
-            done = time.perf_counter()
-            timings.add("work", (done - began) * 1000)
-            if last_out is not None:
-                intervals.append((done - last_out) * 1000)
-            last_out = done
-            timings.next_frame()
-            if save is not None and i % SAVE_EVERY == 0:
-                outputs.append(out.copy())
+        tracker.start()
+        app.stream(cats, controls, Effects({}, (OUT_W, OUT_H)), voice_load.voice if voice_load else Voice(),
+                   tracker, output)
     finally:
+        tracker.stop()
         if voice_load:
             voice_load.__exit__(None, None, None)
-        for u in undo:
+        for u in reversed(undo):
             u()
         timings.close()
     if save is not None:
         save.mkdir(parents=True, exist_ok=True)
-        for k, out in enumerate(outputs):
-            kind = "3d" if isinstance(cat.mesh, Head3D) else "flat"
+        for k, out in enumerate(output.kept):
+            kind = "flat" if flat else "3d"
             cv2.imwrite(str(save / f"{cat.name}_{kind}_{k * SAVE_EVERY:04d}.png"), out)
     missed = webcam.missed - missed_before
-    report(cat.name, timings, intervals[1:], missed, voice_load.late if voice_load else None)
+    intervals = list(np.diff(output.sent) * 1000)[1:]
+    skipped = len(tracker.tracking) - tracker.handed
+    report(cat.name, timings, intervals, missed, skipped, tracker.tracking,
+           voice_load.late if voice_load else None)
     work = [f["work"] for f in timings.frames[1:]]
-    return {"work": work, "intervals": intervals[1:], "missed": missed, "first": timings.frames[0]["work"]}
+    return {"work": work, "intervals": intervals, "missed": missed + skipped,
+            "first": timings.frames[0]["work"]}
+
+
+def stub(owner, name: str, replacement):
+    """Puts replacement in place of owner.name; returns what undoes it."""
+    original = getattr(owner, name)
+    setattr(owner, name, replacement)
+    return lambda: setattr(owner, name, original)
 
 
 def record(path: str, seconds: float, camera: int):
@@ -369,6 +421,7 @@ def main(argv=None):
     parser.add_argument("--fps", type=float, default=FPS, help="webcam frame rate; 0 = as fast as possible")
     parser.add_argument("--voice", action="store_true", help="also run the voice on its thread")
     parser.add_argument("--save", type=Path, help="write some rendered frames to this folder")
+    parser.add_argument("--window", action="store_true", help="show the preview window, as the app does")
     args = parser.parse_args(argv)
     if args.record:
         return record(args.record, args.seconds, args.camera)
@@ -376,17 +429,21 @@ def main(argv=None):
     print("Loading cats...")
     renderer = Renderer((OUT_W, OUT_H))
     cats = load_cats(renderer)
-    chosen = [c for c in cats if (args.cats is None or c.name in args.cats)
+    chosen = [i for i, c in enumerate(cats) if (args.cats is None or c.name in args.cats)
               and (args.flat or c.head3d is not None)]
     if not chosen:
         sys.exit("No such animals.")
-    script = Script(chosen[0].points)
-    trackers = app.create_trackers()
+    script = Script(cats[chosen[0]].points)
+    picker = Picker([(c.name, c.sprite, c.background) for c in cats])
     webcam = Webcam(args.video, args.fps)
+    if args.window:
+        cv2.namedWindow(app.WINDOW, cv2.WINDOW_AUTOSIZE)
     results = {}
-    for cat in chosen:
-        results[cat.name] = run_cat(shown(cat, not args.flat), script, webcam, trackers, args.frames,
-                                    args.save, args.voice)
+    for index in chosen:
+        results[cats[index].name] = run_cat(cats, index, args.flat, script, webcam, picker, args.frames,
+                                            args.save, args.voice, args.window)
+    if args.window:
+        cv2.destroyAllWindows()
     work = np.concatenate([r["work"] for r in results.values()])
     intervals = np.concatenate([r["intervals"] for r in results.values()])
     print(f"\nAll animals ({len(work)} frames, {sum(r['missed'] for r in results.values())} missed):")

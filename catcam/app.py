@@ -14,9 +14,11 @@ Keys in the preview window: c = change cat, n = "this is my neutral face"
 import argparse
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from dataclasses import dataclass, replace
+from typing import NamedTuple
 
 import cv2
 import mediapipe as mp
@@ -104,6 +106,7 @@ KEEP_POSE, RELAX, EASE_BACK = 0.5, 1.0, 0.3
 NO_FACE_HINT_AFTER = 1.0  # s without a face before the preview says so
 WEBCAM_TIMEOUT = 5.0  # s of failed webcam reads before giving up
 FIRST_FRAME_TIMEOUT = 60.0
+STOP_TIMEOUT = 2.0  # s to wait for the tracker's thread to finish its frame when quitting
 ENTER, ESC = 13, 27
 
 
@@ -547,26 +550,84 @@ def frames(webcam):
             time.sleep(0.01)
 
 
-def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, trackers, vcam, webcam,
+class Tracked(NamedTuple):
+    """One webcam frame, tracked."""
+    time: float  # when it was read (time.monotonic)
+    size: tuple[int, int]  # the frame's width and height
+    face: object  # MediaPipe's FaceLandmarkerResult
+    hands: object  # and HandLandmarkerResult
+
+
+class Tracker:
+    """Reads the webcam and finds your face and hands on a thread of its own, so one
+    frame is tracked while the one before is drawn. Only the newest frame is kept:
+    if drawing falls behind, frames are skipped rather than queued up."""
+
+    def __init__(self, webcam, trackers):
+        self.webcam = webcam
+        self.face_tracker, self.hand_tracker = trackers
+        self._ready = threading.Condition()
+        self._newest: Tracked | None = None
+        self._error: BaseException | None = None
+        self._stopping = False
+        self._thread = threading.Thread(target=self._run, name="tracker", daemon=True)
+
+    def start(self) -> "Tracker":
+        self._thread.start()
+        return self
+
+    def track(self, frame: np.ndarray, timestamp: int):
+        """MediaPipe's face and hand results for a frame (BGR) at timestamp (ms)."""
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        return (self.face_tracker.detect_for_video(image, timestamp),
+                self.hand_tracker.detect_for_video(image, timestamp))
+
+    def _run(self):
+        start = time.monotonic()
+        try:
+            for frame, now in frames(self.webcam):
+                if self._stopping:
+                    return
+                face, hands = self.track(frame, int((now - start) * 1000))
+                with self._ready:
+                    self._newest = Tracked(now, (frame.shape[1], frame.shape[0]), face, hands)
+                    self._ready.notify()
+        except BaseException as e:  # e.g. the webcam stopping (SystemExit): the main thread raises it
+            with self._ready:
+                self._error = e
+                self._ready.notify()
+
+    def next(self) -> Tracked:
+        """The newest tracked frame not handed out yet; waits for one."""
+        with self._ready:
+            while self._newest is None and self._error is None:
+                self._ready.wait()
+            if self._newest is None:
+                raise self._error
+            tracked, self._newest = self._newest, None
+            return tracked
+
+    def stop(self):
+        self._stopping = True
+        self._thread.join(timeout=STOP_TIMEOUT)
+
+
+def stream(cats: list[Cat], controls: Controls, effects: Effects, voice: Voice, tracker: Tracker, vcam,
            background: Background | None = None):
-    face_tracker, hand_tracker = trackers
     state, paws, tail, tail_hands = FaceState(), Paws(OUT_W), Tail((OUT_W, OUT_H)), TailHand()
     chooser, reactions = Chooser(), Reactions()
     controls.background = background is not None
-    start = last = time.monotonic()
+    last = time.monotonic()
     notice_until = 0.0
     app = terminal_name()
     restart = "quit Cat Cam and open it again" if app == "Cat Cam" else f"quit and reopen {app}"
     notice = [f"Allow {app} under Input Monitoring (opened in System Settings),",
               f"then {restart}" + ("." if app == "Cat Cam" else " and start Cat Cam again.")]
-    for frame, now in frames(webcam):
+    while True:
+        tracked = tracker.next()
+        now, cam_size, hands = tracked.time, tracked.size, tracked.hands
         dt, last = max(now - last, 1e-3), now
-        cam_size = (frame.shape[1], frame.shape[0])
-        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        timestamp = int((now - start) * 1000)
-        state.update(face_tracker.detect_for_video(image, timestamp), cam_size, dt, now,
-                     voice.syllables.speaking)
-        hands = hand_tracker.detect_for_video(image, timestamp)
+        state.update(tracked.face, cam_size, dt, now, voice.syllables.speaking)
         cat = shown(cats[controls.current], controls.head3d)
         controls.has_head3d = cat.head3d is not None
         voice.sounds = cat.sounds if controls.voice else Sounds()
@@ -689,12 +750,14 @@ def run(argv=None):
         print(f"Listening to '{mic.heard}', sending your voice to '{mic.device}'. "
               "Select it as the microphone in Zoom.")
     print("Pick a cat in the window. Keep a relaxed face for a second at the start.")
+    tracker = Tracker(webcam, trackers).start()
     try:
         with vcam:
-            stream(cats, Controls(picker, mouse), effects, voice, trackers, vcam, webcam, background)
+            stream(cats, Controls(picker, mouse), effects, voice, tracker, vcam, background)
     except KeyboardInterrupt:
         pass
     finally:
+        tracker.stop()
         mic.stop()
         effects.stop()
         webcam.release()
