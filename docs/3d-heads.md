@@ -217,10 +217,10 @@ renders each from the front, the side and from below:
 The hinge and the mouth cavity are in `catcam/mouth3d.py`.
 
 **Its own mouth instead** (`--own-mouth`): the head keeps its own lips and
-inside, so no lip cut or mouth cavity is added. The import finds the head's
-own lower jaw on the model and cuts it free, and the app swings it open with
-your mouth, with the same teeth, gums and tongue inside. Woofgang's is like
-that:
+inside, so no lip cut or mouth cavity mesh is added. The import finds the
+head's own lower jaw on the model and cuts it free, and the app swings it open
+with your mouth, with the same teeth, gums and tongue inside. All eight
+shipped heads are like that:
 - **Where the lips meet:** where the upper lip ends. The face fit's line
   between the lips lands on the lower lip when it misses, so the import looks
   on the model, seen from the portrait's camera, for the upper lip's lower
@@ -249,9 +249,25 @@ that:
   (`JAW_SOFT_NEAR`, `JAW_SOFT`), so the chin swings down in one piece. The
   cut ends soon past the mouth corners (`CORNER_CUT`), so no slit opens down
   the cheeks.
-- **Its inside:** between the parted lips the app draws whatever the model
-  has there (never seen, so its texture is guesswork) as the dark inside of
-  the mouth, and so are the head's back faces just round it.
+- **Its inside:** between the parted lips the model's own surface there was
+  never seen, so its texture is guesswork; the app draws it, and the head's
+  back faces just round it, as a mouth cavity instead. For each of those
+  pixels the shader follows the ray from the camera into an egg-shaped hollow
+  behind the teeth (`OWN_CAVITY` in `catcam/head3d.py`, in mouth widths: its
+  roof just above the teeth, where the palate is, its floor `OWN_FLOOR` down
+  and dropping further as the jaw opens) and colours the wall it hits: a
+  warm pinkish-red lining (`OWN_LINING`, taking on half the lip colour like
+  the gums, `LINING_TINT`), lit from the camera's side, with a soft mottle,
+  ridges across the palate and a wet sheen where its walls are seen edge on;
+  a throat (`OWN_THROAT`) darkening the back wall halfway down; a floor in the
+  tongue's shadow; and the lips' shadow on whatever is right behind them
+  (`LIPS_SHADOW`). A dog's lining has dark pigment blotches (`PIGMENT`).
+  Because it is traced, it turns with the head (the cheek wall shows as you
+  turn, the palate as you tilt your head back), yet it is only a backdrop:
+  never drawn outside the head's own inside, so it can't poke through the
+  cheeks or chin, and the teeth and tongue are always in front of it. The
+  modelled palate is left out for these heads, as the cavity's roof is the
+  palate.
 - **The mouth inside** is sized and placed by the slit: the import saves where
   the lips meet in the middle (the upper lip's rim there, so the teeth hang
   right behind it) and how wide the slit is. Teeth or tongue that

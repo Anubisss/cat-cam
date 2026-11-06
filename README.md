@@ -293,9 +293,11 @@ These constants sit at the top of their files:
    has its lower jaw found and cut free when it is imported: it grows over the
    model from the lower lip, the upper face from the upper lip, and they meet
    in the slit between the lips (`catcam/head3d_import.py`). The jaw then swings
-   about its hinge as far as your lower lip drops, showing teeth, gums, a
-   palate and a tongue modelled in Blender, a cat's or a dog's
-   (`catcam/mouth3d.py`, `tools/mouth_model.py`).
+   about its hinge as far as your lower lip drops, showing teeth, gums and a
+   tongue modelled in Blender, a cat's or a dog's (`catcam/mouth3d.py`,
+   `tools/mouth_model.py`), in front of a mouth cavity the shader traces
+   behind them: a wet pinkish-red lining with a ridged palate, darkening into
+   the throat.
 7. While you are still and quiet, `catcam/idle.py` adds breathing, a sway and
    glances to the head. A background picture or video goes wherever the
    animal isn't (`catcam/background.py`). Emoji reactions are drawn on

@@ -2,7 +2,8 @@
 
 Teeth, gums, a palate and a tongue, modelled in Blender by tools/mouth_model.py
 (one set for cats, one for dogs, in assets/mouth/), plus a mouth cavity behind
-them for heads without their own inside. All of it lives in a local frame in
+them for heads without their own inside (a head with its own draws that as the
+cavity, palate and all: catcam.head3d). All of it lives in a local frame in
 mouth widths: origin where the lips meet in the middle, x toward the
 image-right corner, y up, z out of the mouth. The lower half (lower teeth and
 gum, tongue, the cavity's floor) carries a jaw weight, so it swings open about
@@ -24,6 +25,9 @@ CAVITY = ((0.0, -0.08, -0.35), (0.9, 0.5, 0.5))
 CAVITY_FRONT = -0.03  # the cavity's open rim, just behind the lips
 CAVITY_COLOUR = (0.32, 0.1, 0.11)  # RGB 0..1, tinted by the cat's lip colour
 THROAT = 0.15  # the cavity darkens to this at its back
+# The palate's and its ridges' colours (RGB 0..255, tools/mouth_model.py PALATE, RUGA): how
+# its vertices are told apart from the rest.
+PALATE_COLOURS = ((140, 69, 76), (184, 112, 115))
 
 
 class Parts(NamedTuple):
@@ -70,19 +74,26 @@ def _cavity(tint: np.ndarray) -> Parts:
                  np.clip(0.5 - (pos[:, 1] - cy) / radii[1], 0, 1), 1 - (1 - THROAT) * depth, faces)
 
 
-def load(animal: str, tint) -> Parts:
-    """The modelled teeth, gums, palate and tongue of animal (one of ANIMALS), the soft
-    parts taking on the cat's lip colour as far as the model says."""
+def load(animal: str, tint, palate: bool = True) -> Parts:
+    """The modelled teeth, gums, palate (unless not wanted) and tongue of animal (one of
+    ANIMALS), the soft parts taking on the cat's lip colour as far as the model says."""
     data = np.load(MOUTHS / f"{animal}.npz")
     tint = np.asarray(tint, float)
     shift = data["tint"].astype(float)[:, None]
     colour = data["colour"] / 255 * (1 + shift * (tint - 1))
+    faces = data["faces"].astype(np.int64)
+    if not palate:  # its triangles go; its vertices stay, unused
+        on_palate = np.zeros(len(colour), bool)
+        for rgb in PALATE_COLOURS:
+            on_palate |= np.all(np.abs(data["colour"].astype(int) - rgb) <= 1, axis=1)
+        faces = faces[~on_palate[faces].any(axis=1)]
     return Parts(data["pos"].astype(float), data["normal"].astype(float), colour,
-                 data["jaw"].astype(float), data["light"].astype(float), data["faces"].astype(np.int64))
+                 data["jaw"].astype(float), data["light"].astype(float), faces)
 
 
 def build(tint, cavity: bool = True, animal: str = "cat") -> Parts:
     """All the mouth parts; tint: the cat's lip colour (RGB, mean 1). cavity: whether
-    to add the mouth cavity (a head with its own mouth has its own inside)."""
+    to add the mouth cavity; a head with its own mouth has its own inside instead, which
+    Head3D draws with the palate on its roof, so the modelled palate is left out."""
     tint = np.asarray(tint, float)
-    return _merge([load(animal, tint)] + ([_cavity(tint)] if cavity else []))
+    return _merge([load(animal, tint, palate=cavity)] + ([_cavity(tint)] if cavity else []))

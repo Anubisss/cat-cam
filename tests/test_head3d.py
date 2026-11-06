@@ -104,8 +104,9 @@ def test_drawn_where_shaped(box, woofgang):
 
 
 def test_own_jaw_opens_between_the_lips(woofgang):
-    """Woofgang keeps his own mouth: opening it swings his jaw down and shows his dark
-    inside between the lips, while everything above them stays put."""
+    """Woofgang keeps his own mouth: opening it swings his jaw down and shows his inside
+    between the lips, a red mouth darkening into the throat, while everything above them
+    stays put."""
     renderer = Renderer(OUT)
     flat = CatMesh(renderer, woofgang.sprite, woofgang.points, BG)
     head = head3d.Head3D(renderer, "Woofgang", flat, woofgang.sprite, woofgang.points, BG)
@@ -116,10 +117,15 @@ def test_own_jaw_opens_between_the_lips(woofgang):
     closed = head.render(woofgang.sprite, still, np.eye(3)).copy()
     opened = head.render(woofgang.sprite, drop, np.eye(3))
 
-    def inside(frame):  # his dark, reddish inside
+    def throat(frame):  # dark, reddish
         return np.count_nonzero((frame.max(axis=2) < 50) & (frame[..., 2] > frame[..., 0]))
 
-    assert inside(opened) > inside(closed) + 0.002 * OUT[0] * OUT[1]
+    def lining(frame):  # red (BGR), not his golden fur
+        b, g, r = np.moveaxis(frame.astype(int), 2, 0)
+        return np.count_nonzero((r > 60) & (g < r / 2) & (b < r / 2))
+
+    for inside in (throat, lining):
+        assert inside(opened) > inside(closed) + 0.002 * OUT[0] * OUT[1]
     top = OUT[1] * 9 // 20  # eyes and nose: a dog's mouth corners reach up beside its nose's tip
     assert np.array_equal(opened[:top], closed[:top])
 

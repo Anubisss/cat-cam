@@ -11,7 +11,7 @@ def test_a_modelled_mouth_has_both_halves(animal):
     assert parts.normal.shape == parts.colour.shape == (n, 3)
     assert len(parts.jaw) == len(parts.light) == n
     assert parts.faces.min() >= 0 and parts.faces.max() < n
-    # Upper teeth, gum and palate on the skull, the rest on the jaw, nothing in between.
+    # Upper teeth and gum on the skull, the rest on the jaw, nothing in between.
     assert set(np.unique(parts.jaw)) == {0.0, 1.0}
     skull, jaw = parts.pos[parts.jaw == 0], parts.pos[parts.jaw == 1]
     assert skull[:, 1].mean() > jaw[:, 1].mean()
@@ -36,6 +36,19 @@ def test_the_cavity_is_only_added_when_asked():
     without = mouth3d.build(np.ones(3), cavity=False)
     with_cavity = mouth3d.build(np.ones(3), cavity=True)
     assert len(with_cavity.pos) > len(without.pos)
+
+
+@pytest.mark.parametrize("animal", mouth3d.ANIMALS)
+def test_a_head_with_its_own_inside_leaves_out_the_palate(animal):
+    """Its inside has a palate of its own (see catcam.head3d): the modelled one goes,
+    the teeth, gums and tongue stay."""
+    whole = mouth3d.load(animal, np.ones(3))
+    parts = mouth3d.build(np.ones(3), cavity=False, animal=animal)
+    palate = np.any([np.all(np.abs(np.rint(whole.colour * 255) - rgb) <= 1, axis=1)
+                     for rgb in mouth3d.PALATE_COLOURS], axis=0)
+    assert palate[whole.faces].all(axis=1).sum() > 100
+    assert not palate[parts.faces].any()
+    assert len(parts.faces) == np.count_nonzero(~palate[whole.faces].any(axis=1))
 
 
 def test_dogs_and_cats_differ():
